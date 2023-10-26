@@ -1,0 +1,151 @@
+1) Создадим файл инвентори hosts.txt
+в нём определим строки с переменными:
+[all_linux]
+linux1 ansible_host=ip  owner=Vasya
+linux1 ansible_host=ip  owner=Petya
+linux1 ansible_host=ip  owner=Masha
+
+2) создадим папку group_vars
+в этой папке создадим файл linux_servers
+В нём напишем:
+---
+ansible_user : engineer
+ansible_ssh_private_key_file : /home/engineer/.ssh/id_rsa
+...
+
+3) в папке проекта создадим конфиг файл
+vim ansible.cfg
+в нём мы напишем:
+[default] - это указанение на конфиг по умолчанию
+host_key_checking = false - чтобы не спрашивал про отпечатки пальцев при первом подключении
+inventory = ./hosts.txt - чтобы не надо было указывать файл inventory
+
+4) создадим playbook playbook10.yml
+---
+- name: Install Apache and upload WebSite
+  host: all
+  become: yes
+
+  vars:
+    source_file: ./MyWebSite/index.html
+    destin_file: /var/www/html
+
+  tasks:
+
+  - name: Install Apache 
+    apt: name: apache2 state=latest
+
+  - name: Copy WebPage to WebServer
+    copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+    notify: Restart Apache
+
+  - name: Start Apache service
+    service: name=apache2 state=started enabled=yes
+
+  handlers:
+  - name: Restart Apache
+    service: name=apache2 state=restarted
+
+5) запускаем:
+ansible-playbook playbook10.yml
+Получаем ошибку, на centos нет apt
+добавляем task
+  - name: check LINUX
+    debug: var=ansible_os_family
+  - name: install Apache for Centos
+    yum: name=httpd state=latest
+Если мы выполним плейбук, то теперь будет две ошибки: одна для апта, другая для яма
+Чтобы этого на происходило, нужно добавить условие when
+
+---
+- name: Install Apache and upload WebSite
+  host: all
+  become: yes
+
+  vars:
+    source_file: ./MyWebSite/index.html
+    destin_file: /var/www/html
+
+  tasks:
+  - name: check LINUX
+    debug: var=ansible_os_family
+
+  - name: Install Apache  for Debian
+    apt: name: apache2 state=latest
+    when: ansible_os_family=="Debian"
+  
+  - name: install Apache for Centos
+    yum: name=httpd state=latest
+    when: ansible_os_family=="RedHat"
+
+  - name: Copy WebPage to WebServer
+    copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+    notify: Restart Apache
+
+  - name: Start Apache service for Debian
+    service: name=apache2 state=started enabled=yes
+    when: ansible_os_family=="Debian"
+  
+  - name: Start Apache service for CentOS
+    service: name=httpd state=started enabled=yes
+    when: ansible_os_family=="RedHat"
+
+  handlers:
+  - name: Restart Apache Debian
+    service: name=apache2 state=restarted
+  
+  - name: Restart Apache CentOS
+    service: name=httpd state=restarted
+
+Но в таком случае у нас не сработает notify
+6) Лучшим способом будет объеденить код ля разных семейств ОС в разные блоки
+
+---
+- name: Install Apache and upload WebSite
+  host: all
+  become: yes
+
+  vars:
+    source_file: ./MyWebSite/index.html
+    destin_file: /var/www/html
+
+    tasks:
+  - name: check LINUX
+    debug: var=ansible_os_family
+
+  - block: #Debian   
+
+    - name: Install Apache  for Debian
+      apt: name: apache2 state=latest
+
+    - name: Copy WebPage to WebServer
+      copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+      notify: Restart Apache Debian
+
+    - name: Start Apache service for Debian
+      service: name=apache2 state=started enabled=yes
+    
+    when: ansible_os_family=="Debian"  
+  
+  - block: #Centos
+    - name: install Apache for Centos
+      yum: name=httpd state=latest
+
+    - name: Copy WebPage to WebServer
+      copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+      notify: Restart Apache CentOS
+
+    - name: Start Apache service for CentOS
+      service: name=httpd state=started enabled=yes
+    
+    when: ansible_os_family=="RedHat"
+
+  handlers:
+  - name: Restart Apache Debian
+    service: name=apache2 state=restarted
+  
+  - name: Restart Apache CentOS
+    service: name=httpd state=restarted
+
+7) запускаем
+ansible-playbook playbook10.yml

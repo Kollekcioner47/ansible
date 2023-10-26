@@ -1,0 +1,76 @@
+1) в папке проекта создаём папку roles
+2) переходим в папку и создаём роль командой:
+ansible-galaxy init web_admin
+у вас создастся набор папок и файлов
+defaults - Переменные которые вы не собираетесь переопредлять
+files - хранилище файлов
+handlers - перехватчики
+meta
+tasks - список задач
+templates
+tests
+vars - Переменные, которые вы собираетесь переопредлять, приоритет ниже
+3) Распределим по ним наш проект
+картинки в  в files
+index.j2 в templates
+в defaults/main.yml
+---
+destin_folder: /var/www/html
+в handlers/main.yml
+---
+- name: Restart Apache Debian
+  service: name=apache2 state=restarted
+  when: ansible_os_family=="Debian"
+  
+- name: Restart Apache CentOS
+  service: name=httpd state=restarted
+  when: ansible_os_family=="RedHat"
+
+в tasks/main.yml
+---
+- name: check LINUX
+    debug: var=ansible_os_family
+
+  - block: #Debian   
+
+    - name: Install Apache  for Debian
+      apt: name: apache2 state=latest
+
+    - name: Start Apache service for Debian
+      service: name=apache2 state=started enabled=yes
+    
+    when: ansible_os_family=="Debian"  
+  
+  - block: #Centos
+    - name: install Apache for Centos
+      yum: name=httpd state=latest
+
+    - name: Start Apache service for CentOS
+      service: name=httpd state=started enabled=yes
+    
+    when: ansible_os_family=="RedHat"
+
+  - name: Generate index.html
+    template: src=index.j2 dest={{ destin_folder }}/index.html mode=0555
+    notify:
+      - Restart Apache Debian
+      - Restart Apache CentOS
+
+  - name: Copy WebPage to WebServer
+    copy: src={{ item }} dest={{ destin_folder }} mode=0555
+    loop:
+      - "pic1.jpg"
+      - "pic2.jpg"
+      - "pic3.jpg"
+      - "pic4.jpg"
+    notify: Restart Apache Debian
+    notify: Restart Apache CentOS
+
+в playbook остаётся:
+---
+- name: Install Apache and upload WebSite
+  host: all
+  become: yes
+
+  roles:
+   - { role: web_admin, when: ansible_system == 'Linux' }

@@ -1,0 +1,25 @@
+1) отредактируем hosts.txt
+[TEST]
+linux1 ansible_host=
+
+[PROD]
+linux2 ansible_host=
+
+[ALL_LINUX:children]
+TEST
+PROD
+
+2) отредактируем playbook
+чтобы не редактировать хосты, нужно определить переменную
+---
+- name: Install Apache and upload WebSite
+  host: "{{MYHOSTS}}"
+  become: yes
+
+  roles:
+   - { role: web_admin, when: ansible_system == 'Linux' }
+3) для передачи переменной
+ansible-playbook playbook.yml --extra-vars "MYHOSTS=TEST"
+
+ Любую переменную можно переопределить через extra-vars
+ 

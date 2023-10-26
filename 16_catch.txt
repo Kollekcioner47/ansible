@@ -1,0 +1,56 @@
+---
+- name: Try Catch
+  hosts: all
+  become: yes
+
+  tasks:
+  - name: task1
+    apt: name=mmmc
+
+  - name: task2
+    shell: echo HelloWorld!
+
+  - name: task3
+    shell: echo PrivetMir!
+
+1) Запускаем и получаем ошибку
+как проигнорировать ошибку?
+---
+  - name: Try Catch
+    hosts: all
+    become: yes
+    ignore_error: yes
+
+    tasks:
+    - name: task1
+      apt: name=mmmc
+
+    - name: task2
+      shell: echo HelloWorld!
+
+    - name: task3
+      shell: echo PrivetMir!
+
+3) Контроль выполнения
+---
+  - name: Try Catch
+    hosts: all
+    become: yes
+    ignore_error: yes
+
+    tasks:
+    - name: task1
+      apt: name=mmmc
+
+    - name: task2
+      shell: echo HelloWorld!
+      register: result
+      #если в переменной есть World, то выдать ошибку
+      failed_when: "'World' in result.stdout"
+      #failed_when: result.rc == 0
+
+    - debug:
+        var: result
+
+    - name: task3
+      shell: echo PrivetMir!

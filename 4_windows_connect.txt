@@ -1,0 +1,22 @@
+нужно установаить библиотеки winrm на мастер
+sudo apt install python3-winrm -y
+
+в файле hosts.txt пропишем windows server
+[windows_servers]
+ws1 ansible_host=ip адрес 
+можем добавить переменные, чтобы не указывать логин\пароль на группе серверов
+[windows_servers:vars]
+ansible_user = administrator
+ansible_password = Pa55w.rd
+ansible_port = 5986
+ansible_connection = winrm
+ansible_winrm_cert_validation = ignore
+
+далее на windows нужно скачать скрипт
+configureRemotingForAnsible.ps1 для настройки клиента
+открываем powershell от имени администратора разрешаем запуск скрптов
+set-executionpolicy -urestricted и запускаем скрипт
+
+проверяем с мастера
+ansible windows_servers -m win_ping --ask-pass
+

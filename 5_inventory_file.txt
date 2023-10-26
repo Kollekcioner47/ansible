@@ -1,0 +1,27 @@
+у нас всегда есть группа all, мы с вами создали две свои группы, а теперь мы сделаем группу из групп
+в файле hosts.txt пишем
+[web_servers]
+172.16.0.1
+[app_servers]
+172.16.0.10
+[db_servers]
+172.16.0.100
+[wad_servers:children]
+web_servers
+app_servers
+db_servers
+
+wad_servers - это группа ansible состоящая из нескольких групп
+
+создадим переменные для линукс серверов
+[my_servers] заменим на [linux_servers]
+и добавим блок [linux_servers:vars]
+а в него добавим строчки
+ansible_user=engineer
+ansible_ssh_private_key_file=/home/engineer/.ssh/id_rsa
+эти настройки теперь можно стереть внутри блока [linux_servers]
+в будущем мы вынесем все  переменые в отдельный файл
+
+давайте прочитаем наш файл с точки зрения ansible
+ansible-inventory --list
+ansible-inventory --graph
