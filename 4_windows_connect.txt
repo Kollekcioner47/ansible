@@ -10,7 +10,7 @@ ansible_user = administrator
 ansible_password = Pa55w.rd
 ansible_port = 5986
 ansible_connection = winrm
-ansible_winrm_cert_validation = ignore
+ansible_winrm_server_cert_validation = ignore
 
 далее на windows нужно скачать скрипт
 configureRemotingForAnsible.ps1 для настройки клиента
