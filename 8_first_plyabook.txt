@@ -1,5 +1,5 @@
 Создадим наш playbook в папке проекта
-vim playbook1.yml
+nano playbook1.yml
 ---
 - name: Test conection to linux servers
   hosts: linux_servers
@@ -14,7 +14,7 @@ vim playbook1.yml
 теперь давайте запустим и проверим
 ansible-playbook playbook1.yml
 создадим ещё один плейбук
-vim playbook2.yml
+nano playbook2.yml
 ---
 - name: Install apache web server
   hosts: linux_servers
@@ -46,7 +46,7 @@ vim playbook3.yml
     apt: name=apache2
 
   - name: Copy web-site
-    copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+    copy: src={{source_file}} dest={{destin_file}} mode=0555
     notife: Restart Apache
 
   - name: Start Apache
