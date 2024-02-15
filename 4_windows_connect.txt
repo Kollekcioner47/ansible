@@ -14,8 +14,10 @@ ansible_winrm_server_cert_validation = ignore
 
 далее на windows нужно скачать скрипт
 configureRemotingForAnsible.ps1 для настройки клиента
-открываем powershell от имени администратора разрешаем запуск скрптов
-set-executionpolicy -urestricted и запускаем скрипт
+открываем powershell от имени администратора разрешаем запуск скрптов:
+set-executionpolicy -urestricted 
+и запускаем скрипт:
+./configureRemotingForAnsible.ps1 
 
 проверяем с мастера
 ansible windows_servers -m win_ping --ask-pass
