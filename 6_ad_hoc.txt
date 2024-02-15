@@ -2,7 +2,7 @@
 ansible ansible_client1 -m setup
 
 Выполним shell команду на клиенте
-ansible ansible_client1 -m shell "команда"
+ansible ansible_client1 -m -a shell "команда"
 для windwos модуль называется win_shell
 
 скопируем файл с мастера на клиент
@@ -13,7 +13,7 @@ ansible ansible_clinet1 -m copy -a "src=privet.txt dest=/home mode=777"
 она не сработает поскольку в хоум нельзя писать без sudo, усилим нашу команду 
 ansible ansible_clinet1 -m copy -a "src=privet.txt dest=/home mode=777" -b
 и наш файлик уйдёт на клиента, проверим это
-ansible ansible_clinet1 -m shell "ls -la /home/privet.txt"
+ansible ansible_clinet1 -m shell -a "ls -la /home/privet.txt"
 а теперь удалим файл
 ansible ansible_clinet1 -m file -a "path=/home/privet.txt state=absent" -b
 
