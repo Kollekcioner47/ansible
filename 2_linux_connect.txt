@@ -73,11 +73,12 @@ sudo systemctl restart ssh
 mkdir ansible
 cd ansible
 создадим host файл со списком клиентов
-vim hosts.txt
+nano hosts.txt
 и введём инструкцию
 [my_servers]
 linux_client1 ansible_host= вводим ip ansible_user=имя юзера ansible_ssh_private_key_file= путь к файлу id_rsa, например /home/engineer/.ssh/id_rsa
-
+ctrl+s - сохранить
+ctrl+x - выйти из нано
 проверяем работу ansible
 ansible -i hosts.txt all -m ping
 подтвержаем импорт ключей
