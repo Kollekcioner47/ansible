@@ -6,7 +6,7 @@ touch linux_servers
 touch windows_servers
 
 открываем файл 
-vim linux_servers
+nano linux_servers
 эти файлы у нас пишутся в формате YAML, в этом формате файл должен начинаться с трёх
  минусов ---, а заканчиваться тремя точками ... (точки можно не писать)
 также нам нужно заменить символ "равно" = на двоеточие :
@@ -15,5 +15,6 @@ vim linux_servers
 ansible_user : engineer
 ansible_ssh_private_key_file : /home/engineer/.ssh/id_rsa
 ...
-
+ctrl+s - сохранить
+ctrl+x - выйти из нано
 теперь удаляем эти строчки из файла hosts.txt и запускаем пинг-понг
