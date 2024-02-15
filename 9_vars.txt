@@ -35,7 +35,7 @@ inventory = ./hosts.txt - чтобы не надо было указывать �
   tasks:
   - name: Print Secret Variable
     debug:
-      vasr: secret
+      var: secret
 ...
 4) Запускаем:
 ansible-playbook playbook.yml
@@ -58,7 +58,7 @@ ansible-playbook playbook.yml
     debug:
       var: secret
   - debug:
-      msg: "Secret Word: {{ secret }}"  
+      msg: "Secret Word: {{secret}}"  
 ...
 6) Запускаем:
 ansible-playbook playbook.yml
@@ -110,7 +110,7 @@ ansible-playbook playbook.yml
       msg: "Secret Word: {{ secret }}"  
   - debug:
       msg: "This server Owner --->>> {{ owner }} <---
-  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - set_facts: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
   - debug:
       var: full_message
 ...
@@ -122,7 +122,7 @@ ansible-playbook playbook.yml
 ansible all -m setup
 
 видим, что есть большое количество готовых переменных, к которым мы можем обращаться
-выведем переменную ansible_distibution:
+выведем переменную ansible_distribution:
 
 ---
 - name : My Variables playbook
@@ -146,7 +146,7 @@ ansible all -m setup
   - debug:
       var: full_message
   - debug:
-      var: ansible_distibution
+      var: ansible_distribution
 ...
 12) результат выполнения команд и модулей тоже можно передать в переменную:
 ---
@@ -167,7 +167,7 @@ ansible all -m setup
       msg: "Secret Word: {{ secret }}"  
   - debug:
       msg: "This server Owner --->>> {{ owner }} <---
-  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - set_facts: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
   - debug:
       var: full_message
   - debug:
@@ -202,7 +202,7 @@ ansible-playbook playbook.yml
       msg: "Secret Word: {{ secret }}"  
   - debug:
       msg: "This server Owner --->>> {{ owner }} <---
-  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - set_facts: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
   - debug:
       var: full_message
   - debug:
