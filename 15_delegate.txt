@@ -24,5 +24,3 @@
         content: |
           This is fileN1
           On {{message}}
-
-2) 
