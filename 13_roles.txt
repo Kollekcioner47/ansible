@@ -28,43 +28,60 @@ destin_folder: /var/www/html
 
 в tasks/main.yml
 ---
-- name: check LINUX
-    debug: var=ansible_os_family
+# tasks file for web_admin
+- name: Check Linux
+  debug: var=ansible_os_family
 
-  - block: #Debian   
-
-    - name: Install Apache  for Debian
-      apt: name: apache2 state=latest
-
-    - name: Start Apache service for Debian
-      service: name=apache2 state=started enabled=yes
-    
-    when: ansible_os_family=="Debian"  
-  
-  - block: #Centos
-    - name: install Apache for Centos
-      yum: name=httpd state=latest
-
-    - name: Start Apache service for CentOS
-      service: name=httpd state=started enabled=yes
-    
-    when: ansible_os_family=="RedHat"
-
-  - name: Generate index.html
-    template: src=index.j2 dest={{ destin_folder }}/index.html mode=0555
-    notify:
-      - Restart Apache Debian
-      - Restart Apache CentOS
-
-  - name: Copy WebPage to WebServer
-    copy: src={{ item }} dest={{ destin_folder }} mode=0555
+- block: #Debian
+  - name: Install Apache for Debian
+    apt: name=apache2
+  - name: Start Apache for Debian
+    service: name=apache2 state=started enabled=yes
+  - name: generate WEB-site
+    template: src=index.j2 dest={{destin_folder}}/index.html mode=0555
+  - name: Copy WEB-site for Debian
+    copy: src={{item}} dest={{destin_folder}} mode=0555
     loop:
       - "pic1.jpg"
       - "pic2.jpg"
       - "pic3.jpg"
       - "pic4.jpg"
-    notify: Restart Apache Debian
-    notify: Restart Apache CentOS
+    notify: Restart Apache for Debian and SuSe
+  when: ansible_os_family=="Debian"  
+
+- block: #RedHat         
+  - name: Install Apache for RedHat
+    yum: name=httpd
+  - name: Start Apache for RedHat
+    service: name=httpd state=started enabled=yes
+  - name: generate WEB-site
+    template: src=index.j2 dest={{destin_folder}}/index.html mode=0555
+  - name: Copy WEB-site for Debian
+    copy: src={{item}} dest={{destin_folder}} mode=0555
+    loop:
+      - "pic1.jpg"
+      - "pic2.jpg"
+      - "pic3.jpg"
+      - "pic4.jpg"
+    notify: Restart Apache for RedHat
+  when: ansible_os_family=="RedHat"
+
+- block: #Suse
+  - name: Install Apache for SuSe
+    zypper: name=apache2
+  - name: Start Apache for SuSe
+    service: name=apache2 state=started enabled=yes
+  - name: generate WEB-site
+    template: src=index.j2 dest=/srv/www/index.html mode=0555
+  - name: Copy WEB-site for Debian
+    copy: src={{item}} dest=/srv/www/ mode=0555
+    loop:
+      - "pic1.jpg"
+      - "pic2.jpg"
+      - "pic3.jpg"
+      - "pic4.jpg"
+    notify: Restart Apache for Debian and SuSe
+  when: ansible_os_family=="SuSe"
 
 в playbook остаётся:
 ---
