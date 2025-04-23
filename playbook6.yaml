@@ -1,0 +1,54 @@
+---
+- name: Install Web-server and upload web-site
+  hosts: my_linux
+  become: yes
+
+  vars:
+    source_file: /home/engineer/ansible/index.html
+    destin_file: /var/www/html
+  
+  tasks:
+  - name: check Linux
+    debug:
+      var: ansible_os_family
+  
+  - block: #Debian
+    - name: Install Apache for Debian
+      apt:
+        name: apache2
+        state: latest
+    - name: Copy WEB-site for Debian
+      copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+      notify: Restart Apache for Debian
+    - name: Start Apache for Debian
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+    when: ansible_os_family == "Debian"
+
+  - block: #RED
+    - name: Install Apache for Red
+      dnf:
+        name: httpd
+        state: latest
+    - name: Copy WEB-site for Red
+      copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+      notify: Restart Apache for Red
+    - name: Start Apache for Red
+      service:
+        name: httpd
+        state: started
+        enabled: yes
+    when: ansible_os_family == "RED"
+  
+  handlers: 
+  - name: Restart Apache for Debian
+    service:
+      name: apache2
+      state: restarted
+  
+  - name: Restart Apache for Red
+    service:
+      name: httpd
+      state: restarted
