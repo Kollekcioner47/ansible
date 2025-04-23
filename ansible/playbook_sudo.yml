@@ -1,0 +1,36 @@
+---
+- name: Modify sudoers file
+  hosts: client2
+  become: yes
+
+  vars:
+    sudoers_path: /etc/sudoers
+    sudoers_tmp: /etc/sudoers.ansible
+  
+  tasks:
+  - name: Copy original sudoers file
+    copy:
+      src: "{{ sudoers_path }}"
+      dest: "{{ sudoers_tmp }}"
+      remote_src: yes
+      backup: yes
+      mode: 0440
+  
+  - name: add new line to tmp sudoers
+    lineinfile:
+      path: "{{ sudoers_tmp }}"
+      line: "devops ALL=(ALL:ALL) NOPASSWD: ALL"
+      state: present
+  
+  - name: validate tmp sudoers
+    command: visudo -cf {{ sudoers_tmp }}
+    register: visudo_check
+    failed_when: visudo_check.rc != 0
+  
+  - name: replace 
+    copy:
+      src: "{{ sudoers_tmp }}"
+      dest: "{{ sudoers_path }}"
+      remote_src: yes
+      mode: 0440
+    when: visudo_check.rc == 0

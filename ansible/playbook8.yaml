@@ -1,0 +1,60 @@
+---
+- name: Install and Configure PostgreSQL
+  hosts: client1
+  become: yes
+
+  vars:
+    pg_version: "17"
+    postgresql_conf_path: "/etc/postgresql/{{pg_version}}/main/postgresql.conf"
+    shared_buffers: "1024MB"
+    work_mem: "16MB"
+  
+  tasks:
+  - name: install prereq
+    apt:
+      name:
+        - gnupg
+        - curl
+        - lsb-release
+      state: latest
+      update_cache: yes
+  
+  - name: add repo key
+    apt_key:
+      url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+      state: present
+  
+  - name: add repo
+    apt_repository:
+      repo: "deb http://apt.postgresql.org/pub/repos/apt {{ansible_distribution_release}}-pgdg main"
+      state: present
+      filename: pgdg
+  
+  - name: update apt
+    apt: update_cache=yes
+  
+  - name: Install Postgresql-{{pg_version}}
+    apt: name=postgresql-{{pg_version}} state=present
+  
+  - name: config postgresql service
+    service: name=postgresql state=started enabled=yes
+  
+  - name: Configure PostgreSQL shared_buffers
+    lineinfile:
+      path: "{{postgresql_conf_path}}"
+      regexp: '^#?/s*shared_buffers\s*='
+      line: "shared_buffers = {{shared_buffers}}"
+      backup: yes
+  
+  - name: Configure PostgreSQL work_mem
+    lineinfile:
+      path: "{{postgresql_conf_path}}"
+      regexp: '^#?/s*work_mem\s*='
+      line: "work_mem = {{work_mem}}"
+      backup: yes
+  
+  - name: restart postgresql service
+    service: name=postgresql state=restarted
+  
+  - name: test postgresql connection
+    wait_for: port=5432 host=localhost timeout=10

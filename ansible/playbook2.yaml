@@ -1,0 +1,14 @@
+---
+- name: Install Web-server and upload web-site
+  hosts: my_deb
+  become: yes
+
+  tasks:
+  - name: Install Apache
+    apt: name=apache2
+  
+  - name: Start Apache
+    service:
+      name: apache2
+      state: started
+      enabled: yes

@@ -1,0 +1,22 @@
+---
+- name: Remove Web-server and web-site
+  hosts: my_linux
+  become: yes
+
+  vars:
+    destin_file: /var/www/html/index.html
+  
+  tasks:
+  - name: check Linux
+    debug: var=ansible_os_family
+  
+  - name: remove Apache from Debian
+    apt: name=apache2 state=absent
+    when: ansible_os_family == "Debian"
+
+  - name: remove Apache from Red
+    dnf: name=httpd  state=absent
+    when: ansible_os_family == "RED"
+  
+  - name: Remove WEB-site
+    file: path="{{destin_file}}" state=absent

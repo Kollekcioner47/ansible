@@ -1,0 +1,31 @@
+---
+- name: My Vars Playbook
+  hosts: my_linux
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPass
+  
+  tasks:
+  - name: Print Secret
+    debug:
+      var: secret
+  
+  - debug:
+      msg: "This server owner --->>> {{ owner }} <<<---"
+
+  - set_fact: full_message="{{message1}} {{message2}} from {{owner}}"
+
+  - debug:
+      var: full_message
+  
+  - debug:
+      var: ansible_os_family
+  
+  - shell: uname -a
+    register: shell_result
+  
+  - debug:
+      var: shell_result.stdout
