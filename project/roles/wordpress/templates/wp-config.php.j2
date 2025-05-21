@@ -1,0 +1,40 @@
+<?php
+#config
+define('DB_TYPE', 'pgsql');
+
+define('WP_USE_EXT_MYSQLDB_TYPE', false);
+
+define('WP_ALLOW_REPAIR', false);
+
+define('DB_NAME', '{{db_name}}');
+
+define('DB_USER', '{{db_user}}');
+
+define('DB_PASSWORD', '{{db_password}}');
+
+define('DB_HOST', '{{db_host}}');
+
+define('DB_CHARSET', 'utf8');
+
+define('DB_COLLATE', '');
+
+#auth
+
+define('AUTH_KEY', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('SECURE_AUTH_KEY', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('LOGGED_IN_KEY', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('NONCE_KEY', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('AUTH_SALT', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('SECURE_AUTH_SALT', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('LOGGED_IN_SALT', '{{lookup("password", "/dev/null", lenght=64)}}');
+define('NONCE_SALT', '{{lookup("password", "/dev/null", lenght=64)}}');
+
+$table_prefix = 'wp_';
+
+define('WP_DEBUG', false);
+
+if ( ! defined('ABSPATH') ) {
+    define('ABSPATH', dirname(__FILE__).'/');
+}
+
+require_once ABSPATH . 'wp-settings.php';

@@ -1,0 +1,27 @@
+---
+# tasks file for nginx
+- name: Install nginx
+  apt: name=nginx state=present update_cache=yes
+
+- name: Config Nginx service
+  service: name=nginx state=started enabled=yes
+
+- name: Generate Site
+  template:
+    src: wordpress-nginx.conf.j2
+    dest: "/etc/nginx/sites-available/{{wp_domain}}"
+
+- name: Enable Nginx Site
+  file:
+    src: "/etc/nginx/sites-available/{{wp_domain}}"
+    dest: "/etc/nginx/sites-enabled/{{wp_domain}}"
+    state: link
+    force: yes
+
+- name: Remove default
+  file: 
+    path: "/etc/nginx/sites-enabled/default"
+    state: absent
+
+- name: Reload Nginx
+  service: name=nginx state=restarted

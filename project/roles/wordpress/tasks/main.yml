@@ -1,0 +1,76 @@
+---
+# tasks file for wordpress
+- name: Install php and WP
+  apt:
+    name:
+      - php
+      - php-fpm
+      - php-pgsql
+      - php-mbstring
+      - php-xml
+      - php-gd
+      - unzip
+    state: present
+    update_cache: yes
+
+- name: Download PostgreSQL for WordPress plugin
+  get_url:
+    url: https://github.com/PostgreSQL-For-Wordpress/postgresql-for-wordpress/archive/refs/tags/v3.3.1.zip
+    dest: /tmp/pg4wp.zip
+    mode: 0644
+
+- name: Extract remaining files to plugins directory
+  unarchive:
+    src: /tmp/pg4wp.zip
+    dest: "{{ wp_root }}/wp-content/plugins/"
+    remote_src: yes
+    creates: "{{ wp_root }}/wp-content/plugins/pg4wp-master"
+
+- name: Extract db.php directly to wp-content
+  copy:
+    src: "{{ wp_root }}/wp-content/plugins/postgresql-for-wordpress-3.3.1/pg4wp/db.php"
+    dest: "{{ wp_root }}/wp-content/"
+    remote_src: yes
+
+- name: Extract plugin directly to /wp-content/plugins/
+  copy:
+    src: "{{ wp_root }}/wp-content/plugins/postgresql-for-wordpress-3.3.1/pg4wp"
+    dest: "{{ wp_root }}/wp-content/plugins/"
+    remote_src: yes
+  
+- name: Config PHP
+  service:
+    name: "php{{ php_version_short | default ('8.2')}}-fpm"
+    state: started 
+    enabled: yes
+
+- name: Create root
+  file:
+    path: "{{wp_root}}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: 0755
+
+- name: Download and Unzip Wordpress
+  unarchive:
+    src: https://wordpress.org/latest.tar.gz
+    dest: /tmp
+    remote_src: yes
+
+- name: Copy WP to root
+  copy:
+    src: /tmp/wordpress/
+    dest: "{{wp_root}}"
+    remote_src: yes
+    owner: www-data
+    group: www-data
+    mode: 0755
+
+- name: Configure wp-config.php
+  template:
+    src: wp-config.php.j2
+    dest: "{{wp_root}}"
+    owner: www-data
+    group: www-data
+    mode: 0644

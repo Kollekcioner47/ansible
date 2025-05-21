@@ -1,0 +1,45 @@
+---
+# tasks file for postgesql
+- name: Install PostgreSQL
+  apt:
+    name:
+    - "postgresql-{{postgresql_version}}"
+    - python3-psycopg2
+    state: present
+    update_cache: yes
+
+- name: Conf PG service
+  service: name=postgresql state=started enabled=yes
+
+- name: Set listener
+  lineinfile:
+    path: "{{postgresql_conf_path}}"
+    regexp: '^#?listen_addresses'
+    line: "listen_addresses = {{postgresql_listen_addresses}}"
+  notify: Restart PostgreSQL
+
+- name: Allow connection
+  lineinfile:
+    path: "{{pg_hba_conf_path}}"
+    regexp: '^host\s+{{db_name}}\s{{db_user}}'
+    line: "host {{db_name}} {{db_user}} 127.1/32 md5"
+    create: yes
+    insertafter: EOF
+  notify: Restart PostgreSQL
+
+- name: Create DB
+  become_user: postgres
+  postgresql_db: name={{db_name}} state=present
+
+- name: Create User
+  become_user: postgres
+  postgresql_user: name={{db_user}} password={{db_password}} state=present
+
+- name: Grant priveleges
+  become_user: postgres
+  postgresql_privs:
+    db: "{{db_name}}"
+    roles: "{{db_user}}"
+    privs: ALL
+    type: database
+
