@@ -1,0 +1,25 @@
+---
+- name: Install WEB-server
+  hosts: all
+  become: yes
+
+  vars:
+    source_file: /home/engineer/ansible/index.html
+    destin_file: /var/www/html/
+    _package: >-
+      {%- if ansible_os_family == "Debian" %}apache2
+      {%- elif ansible_os_family == "RED" %}httpd
+      {%- elif ansible_os_family == "FreeBSD" %}apache24
+      {%- else %}apache2{% endif %}
+
+  tasks:
+  - name: Install Apache
+    package: name={{_package}}
+  - copy: src={{source_file}} dest={{destin_file}} mode=0644
+    notify: Restart Apache
+  - name: Start Apache
+    service: name={{_package}} state=started enabled=yes
+  
+  handlers:
+  - name: Restart Apache
+    service: name={{_package}} state=restarted
