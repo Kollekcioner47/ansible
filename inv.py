@@ -19,7 +19,7 @@ def scan_network_for_ssh(subnet="10.0.3.0/24"):
         return []
 def is_linux_host(ip, user):
     try:
-        ssh_cmd = ["ssh", "-0", "BatchMode=yes", "-o", "ConnectTimeout=3", f"{user}@{ip}", "uname"]
+        ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{user}@{ip}", "uname"]
         output = subprocess.check_output(ssh_cmd, stderr=subprocess.DEVNULL).decode().strip()
         return output == "Linux"
     except Exception:
