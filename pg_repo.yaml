@@ -1,0 +1,61 @@
+---
+- name: Install Latest PostgreSQL
+  hosts: all
+  become: yes
+  vars:
+    # Укажите желаемую мажорную версию (16 - последняя на момент написания)
+    pg_version: "16"
+    
+  tasks:
+    - name: Include OS-specific variables
+      include_vars: "{{ item }}"
+      loop:
+        - "{{ ansible_facts['distribution'] | lower }}{{ ansible_facts['distribution_major_version'] | lower }}.yml"
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Install prerequisites (Debian)
+      apt:
+        name:
+          - gnupg
+          - curl
+          - software-properties-common
+        state: present
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Add PostgreSQL GPG key (Debian)
+      apt_key:
+        url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+        state: present
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Add PostgreSQL repository (Debian)
+      apt_repository:
+        repo: "deb https://apt.postgresql.org/pub/repos/apt {{ ansible_facts['distribution_release'] }}-pgdg main"
+        state: present
+        filename: "postgresql"
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Install PostgreSQL (Debian)
+      apt:
+        name: "postgresql-{{ pg_version }}"
+        state: latest
+        update_cache: yes
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Install PostgreSQL repository RPM (RHEL)
+      yum:
+        name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+        state: present
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Disable built-in PostgreSQL module (RHEL 9+)
+      command: "dnf -qy module disable postgresql"
+      when:
+        - ansible_facts['os_family'] == "RedHat"
+        - ansible_facts['distribution_major_version'] | int >= 9
+
+    - name: Install PostgreSQL (RHEL)
+      package:
+        name: "postgresql{{ pg_version }}-server"
+        state: latest
+      when: ansible_facts['os_family'] == "RedHat"
