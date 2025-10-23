@@ -1,0 +1,37 @@
+---
+- name: modify sudoers
+  hosts: all
+  become: yes
+
+  vars:
+    sudoers_path: /etc/sudoers
+    sudoers_tmp: /etc/sudoers.ansible
+  
+  tasks:
+  - name: copy original sudoers
+    copy:
+      src: "{{sudoers_path}}"
+      dest: "{{sudoers_tmp}}"
+      remote_src: yes
+      backup: yes
+      mode: 0440
+  
+  - name: add new sudoers
+    lineinfile:
+      path: "{{sudoers_tmp}}"
+      line: "engineer ALL=(ALL:ALL) NOPASSWD: ALL"
+      state: present
+  
+  - name: validate sudoers
+    command: visudo -cf {{sudoers_tmp}}
+    register: visudo_check
+    failed_when: visudo_check.rc != 0
+  
+  - name: replace sudoers
+    copy: 
+      src: "{{sudoers_tmp}}"
+      dest: "{{sudoers_path}}"
+      remote_src: yes
+      backup: yes
+      mode: 0440
+    when: visudo_check.rc == 0
