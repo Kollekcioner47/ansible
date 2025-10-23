@@ -34,12 +34,5 @@
         filename: "postgresql"
       when: ansible_facts['os_family'] == "Debian"
 
-    - name: Install PostgreSQL (Debian)
-      apt:
-        name: "postgresql-{{ pg_version }}"
-        state: latest
-        update_cache: yes
-      when: ansible_facts['os_family'] == "Debian"
-
   
  
