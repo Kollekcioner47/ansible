@@ -1,0 +1,13 @@
+---
+- name: change values in ini files
+  hosts: all
+  become: yes
+
+  tasks:
+  - name: change ini file
+    ini_file:   #модуль для правки ини файлов
+      path: #путь к файлу
+      section: test #Поиск секции в [test] (в квадратных скобках)
+      option: primer #поиск строки, которая начинается с primer=
+      values: val #после равно заменить на val
+    #если секция или опция не найдены, то будут созданы
