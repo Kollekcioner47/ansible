@@ -1,0 +1,34 @@
+# Ansible Managed File
+user {{ nginx_user }};
+worker_processes {{ nginx_worker_processes }};
+
+error_log /var/log/nginx/error.log;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    access_log /var/log/nginx/access.log;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    server {
+        listen {{ nginx_port }};
+        server_name {{ nginx_server_name }};
+        root {{ nginx_root }};
+        index index.html index.htm;
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+    }
+}
