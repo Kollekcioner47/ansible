@@ -1,0 +1,13 @@
+#SPDX-License-Identifier: MIT-0
+---
+# defaults file for nginx-deploy
+nginx_port: 80
+nginx_root: /var/www/html/
+nginx_worker_process: 1
+nginx_server_name: localhost
+
+nginx_user: www-data
+nginx_daemon: yes
+
+nginx_ansible_service: true
+nginx_create_test_page: false

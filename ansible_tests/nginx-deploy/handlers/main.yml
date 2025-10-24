@@ -1,0 +1,5 @@
+#SPDX-License-Identifier: MIT-0
+---
+# handlers file for nginx-deploy
+- name: restart nginx
+  service: name=nginx state=restarted

@@ -1,0 +1,11 @@
+---
+- name: Разёртывание Nginx
+  hosts: nodes
+  become: yes
+  roles:
+    - nginx-deploy
+  
+  vars: 
+    nginx_port: 8081
+    nginx_server_name: localhost
+    nginx_create_test_page: true

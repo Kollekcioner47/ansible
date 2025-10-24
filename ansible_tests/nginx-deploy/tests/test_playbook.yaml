@@ -1,0 +1,9 @@
+---
+- name: Тестирование роли nginx_deploy
+  hosts: localhost
+  connection: local
+  roles:
+    - nginx-deploy
+  vars:
+    nginx_port: 8080
+    nginx_create_test_page: true
