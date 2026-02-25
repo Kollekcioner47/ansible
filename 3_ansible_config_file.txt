@@ -4,9 +4,11 @@ nano ansible.cfg
 [defaults] - это указанение на конфиг по умолчанию
 host_key_checking = false - чтобы не спрашивал про отпечатки пальцев при первом подключении
 inventory = ./hosts.txt - чтобы не надо было указывать файл invenory
+interpreter_python = auto_silent
 сохраняем и выходим
 ctrl+s - сохранить
 ctrl+x - выйти из нано
 проверяем работу
 ansible all -m ping
 должен отработать пинг-понг
+
