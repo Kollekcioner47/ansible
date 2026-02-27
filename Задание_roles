@@ -1,0 +1,50 @@
+Ваша команда системных администраторов регулярно подключается к серверам под учётной записью support_engineer. Требуется автоматизировать процесс создания этого пользователя, его настройки в sudoers и верификации, что учётная запись работает корректно. После выполнения настройки на всех серверах необходимо получать отчёт о результатах на сервере Ansible (control node).
+
+Создайте роль Ansible с именем support_user . Роль должна содержать следующие элементы:
+Переменные по умолчанию (defaults/main.yml) со следующими параметрами:
+support_user_name: support_engineer
+support_user_group: sudo (или wheel – в зависимости от дистрибутива)
+support_user_shell: /bin/bash
+support_user_sudo_nopasswd: true (разрешить выполнение sudo без пароля)
+
+Задачи (tasks/main.yml):
+Создание пользователя support_engineer (имя берётся из переменной) с заданной оболочкой и домашним каталогом.
+Добавление пользователя в указанную группу (например, sudo).
+Настройка sudo через файл в /etc/sudoers.d/ с использованием шаблона (templates/sudoers.d.j2), который обеспечит пользователю право на выполнение любых команд (или только определённых). Если переменная support_user_sudo_nopasswd установлена в true, в правиле sudo добавляется NOPASSWD: ALL.
+Проверка возможности использования sudo новым пользователем. Для этого выполните команду whoami с повышением привилегий через become: yes и become_user: "{{ support_user_name }}". Результат проверки сохраните в переменную.
+Сбор итоговой информации об успешности создания пользователя и проверки sudo для последующего отчёта.
+Шаблон (templates/sudoers.d.j2) для файла sudoers.
+
+Напишите плейбук site.yml, который применяет созданную роль к группе хостов
+Реализуйте формирование отчёта на сервере Ansible:
+Добавьте в роль задачу, которая собирает результаты со всех хостов (используйте hostvars и delegate_to: localhost).
+Отчёт должен создаваться в виде текстового файла (например, /tmp/support_user_report.txt) и содержать для каждого целевого хоста:
+Имя хоста (или IP-адрес)
+Статус создания пользователя (успешно / не удалось)
+Результат проверки sudo (успешно / не удалось)
+Дату и время выполнения
+Для генерации содержимого используйте модуль copy с параметром content или шаблон.
+
+Подсказки
+Для создания пользователя используйте модуль ansible.builtin.user.
+Для добавления пользователя в группу – параметр groups модуля user и append: yes.
+Файл в /etc/sudoers.d/ должен иметь права 0440. Шаблон может выглядеть так:
+{{ support_user_name }} ALL=(ALL:ALL) {% if support_user_sudo_nopasswd %}NOPASSWD:{% endif %} ALL
+
+Проверку sudo можно выполнить задачей:
+- name: Проверить sudo для нового пользователя
+  ansible.builtin.command: whoami
+  become: true
+  become_user: "{{ support_user_name }}"
+  register: sudo_check
+  changed_when: false
+  ignore_errors: true
+
+Для сбора результатов в отчёт удобно определить факт (set_fact) на каждом хосте, а затем на control node собрать их через hostvars:
+- name: Собрать факты для отчёта
+  ansible.builtin.set_fact:
+    report_data: "{{ report_data | default({}) | combine({inventory_hostname: {'user_created': user_created_status, 'sudo_ok': sudo_check_success}}) }}"
+  run_once: true
+  delegate_to: localhost
+
+Затем использовать report_data для генерации отчёта.
