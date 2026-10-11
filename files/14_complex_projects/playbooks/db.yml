@@ -1,0 +1,50 @@
+---
+# playbooks/db.yml — настройка сервера баз данных стенда
+# (db1, Rocky Linux 10). СУБД в стенде нет: play настраивает то,
+# что можно проверить на живой машине, и остаётся заготовкой
+# рабочего проекта.
+#
+# Общие проверки включены динамически, ключом include_tasks.
+# Тег на динамическом включении не тегирует задачи внутри файла,
+# поэтому теги перечислены ещё и в apply.
+
+- name: Сервер баз данных
+  hosts: db
+  become: true
+  gather_facts: true
+  tags:
+    - db
+
+  tasks:
+    - name: Выполнить общие проверки машины
+      ansible.builtin.include_tasks:
+        file: ../tasks/common_checks.yml
+        apply:
+          tags:
+            - checks
+            - always
+      when: common_checks_enabled | bool
+      tags:
+        - checks
+        - always
+
+    - name: Создать каталог для резервных копий
+      ansible.builtin.file:
+        path: "{{ db_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Положить описание машины в каталог резервных копий
+      ansible.builtin.copy:
+        content: |
+          {{ inventory_hostname }} — сервер баз данных учебного стенда.
+          Семейство ОС: {{ ansible_facts['os_family'] }}
+          Версия: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          Ядро: {{ ansible_facts['kernel'] }}
+          Адрес: {{ ansible_facts['default_ipv4']['address'] }}
+        dest: "{{ db_backup_dir }}/README.txt"
+        owner: root
+        group: root
+        mode: "0644"

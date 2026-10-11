@@ -1,0 +1,13 @@
+# 02_web.yml — шаг 4 практики 4: ставим веб-сервер.
+# Имя пакета пока написано прямо в задаче: это заготовка
+# под практику 7, где появятся условия для семейств ОС.
+
+- name: Установить веб-сервер
+  hosts: web:db
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Установить пакет веб-сервера
+      ansible.builtin.apt:
+        name: apache2
+        state: present

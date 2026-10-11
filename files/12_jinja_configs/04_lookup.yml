@@ -1,0 +1,40 @@
+---
+# Практика 12, шаг 12: подстановки из внешних источников.
+# Все три lookup выполняются на управляющей машине.
+# Запуск: ansible-playbook 04_lookup.yml
+
+- name: "Показать, откуда шаблон берёт данные"
+  hosts: linux
+  become: true
+  vars:
+    lab_notice_source: "{{ playbook_dir }}/data/notice.txt"
+    lab_notice_template: "{{ playbook_dir }}/templates/notice.j2"
+  tasks:
+    - name: "Прочитать текст объявления с управляющей машины"
+      ansible.builtin.set_fact:
+        lab_notice_text: "{{ lookup('file', lab_notice_source) }}"
+
+    - name: "Взять тег объявления из окружения управляющей машины"
+      ansible.builtin.set_fact:
+        lab_notice_tag: "{{ lookup('env', 'LAB_NOTICE_TAG') | default('учебный стенд', true) }}"
+
+    - name: "Собрать объявление шаблоном на управляющей машине"
+      ansible.builtin.set_fact:
+        lab_notice_rendered: "{{ lookup('template', lab_notice_template) }}"
+
+    - name: "Показать, что получилось"
+      ansible.builtin.debug:
+        msg:
+          - "Файл: {{ lab_notice_source | basename }} ({{ lab_notice_text | length }} символов)"
+          - "Каталог: {{ lab_notice_source | dirname }}"
+          - "Тег: {{ lab_notice_tag | upper }}"
+          - "Первая строка: {{ lab_notice_text.splitlines() | first }}"
+          - "В base64: {{ lab_notice_text | b64encode }}"
+
+    - name: "Положить объявление на узел"
+      ansible.builtin.copy:
+        content: "{{ lab_notice_rendered }}\nТег: {{ lab_notice_tag }}\n"
+        dest: /etc/lab-notice
+        owner: root
+        group: root
+        mode: "0644"

@@ -1,0 +1,12 @@
+# Образец /etc/chrony.conf для Rocky Linux 10 (db1).
+# Копируется на узел задачей ansible.builtin.copy из 04_replace.yml,
+# дальше правится задачами ansible.builtin.replace.
+# Имена серверов времени учебные: на своём стенде замените на свои.
+# Содержимое совпадает с напечатанным в 11_regex_configs.txt.
+
+server 0.centos.pool.ntp.org iburst
+server 1.centos.pool.ntp.org iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony

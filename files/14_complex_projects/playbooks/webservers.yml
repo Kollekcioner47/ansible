@@ -1,0 +1,25 @@
+---
+# playbooks/webservers.yml — веб-часть проекта практики 14.
+# Здесь всё сделано статически: роль подключена ключом roles, общие
+# проверки — ключом import_tasks. Поэтому задачи видны в --list-tasks,
+# а тег на включении достаётся всем включённым задачам.
+# serial берётся из group_vars окружения: у dev это "100%", у prod — 1.
+
+- name: "Веб-серверы: сайт, проверки и безопасное обновление"
+  hosts: web
+  become: true
+  gather_facts: true
+  serial: "{{ update_serial | default(1) }}"
+  max_fail_percentage: 0
+  tags:
+    - web
+
+  roles:
+    - role: web_admin
+
+  tasks:
+    - name: Выполнить общие проверки машины
+      ansible.builtin.import_tasks: ../tasks/common_checks.yml
+      tags:
+        - checks
+        - always

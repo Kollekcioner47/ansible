@@ -1,0 +1,54 @@
+---
+# Практика 6, шаг 10: волшебные переменные, hostvars и данные обо всём парке.
+# Запуск: ansible-playbook 05_hostvars.yml
+#
+# Опыт с ограничением по машинам: ansible-playbook 05_hostvars.yml --limit db1
+# Тогда факты web2 в hostvars не собраны, и задача «Показать адрес web2»
+# падает с ошибкой про undefined. Это разобрано в практике, в разделе
+# «Если что-то пошло не так».
+
+- name: Показать, что Ansible знает о машине и о парке
+  hosts: linux
+  gather_facts: true
+  tasks:
+    - name: Показать переменные о самой машине
+      ansible.builtin.debug:
+        msg:
+          - "inventory_hostname: {{ inventory_hostname }}"
+          - "inventory_hostname_short: {{ inventory_hostname_short }}"
+          - "group_names: {{ group_names | join(', ') }}"
+          - "inventory_dir: {{ inventory_dir }}"
+          - "ansible_check_mode: {{ ansible_check_mode }}"
+          - "Хостов в текущем прогоне: {{ ansible_play_hosts | length }}"
+
+    - name: Показать группы инвентаря
+      ansible.builtin.debug:
+        msg:
+          - "web: {{ groups['web'] | join(', ') }}"
+          - "db: {{ groups['db'] | join(', ') }}"
+          - "linux: {{ groups['linux'] | join(', ') }}"
+          - "debian: {{ groups['debian'] | join(', ') }}"
+          - "redhat: {{ groups['redhat'] | join(', ') }}"
+
+    - name: Собрать адреса всего парка из hostvars
+      ansible.builtin.debug:
+        msg: "{{ item }}: {{ hostvars[item]['ansible_default_ipv4']['address'] | default('фактов нет') }}"
+      loop: "{{ groups['linux'] }}"
+
+    - name: Показать адрес web2, глядя с этой машины
+      ansible.builtin.debug:
+        msg: "web2: {{ hostvars['web2']['ansible_default_ipv4']['address'] }}"
+
+    - name: Показать фильтры и тесты Jinja2 на данных инвентаря
+      ansible.builtin.debug:
+        msg:
+          - "upper: {{ ansible_os_family | upper }}"
+          - "length: {{ groups['linux'] | length }}"
+          - "join: {{ groups['linux'] | join(' + ') }}"
+          - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
+          - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
+          - "b64encode: {{ 'engineer' | b64encode }}"
+          - "default: {{ lab_owner | default('не назначен') }}"
+          - "is defined: {{ ansible_local.site.general.owner is defined }}"
+          - "is not none: {{ ansible_processor_vcpus is not none }}"
+          - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"

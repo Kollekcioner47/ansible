@@ -1,0 +1,1184 @@
+Практика 12. Jinja2 для настоящих конфигов.
+
+ЭТА ПРАКТИКА — ПРЯМОЕ ПРОДОЛЖЕНИЕ ШЕСТОЙ. Там мы собрали из шаблона
+страницу сайта и motd. Здесь шаблоны становятся рабочим инструментом:
+из них собираются конфигурации nginx и sshd, resolv.conf и chrony.conf —
+файлы, которые читает служба, а не человек. Ошибка в таком файле
+означает не некрасивую страницу, а упавший веб-сервер или потерянный
+доступ по SSH. Поэтому здесь же разбираются проверка конфигурации
+до подстановки, управление пробелами и границы применимости lookup.
+
+=========================================================================
+ЧТО МЫ СДЕЛАЕМ
+=========================================================================
+
+Соберём из переменных четыре настоящие конфигурации: виртуальный хост
+nginx, upstream с циклом по бэкендам, sshd_config циклом по словарю
+параметров, motd, resolv.conf и chrony.conf. Каждую проверим
+до подстановки: nginx -t и sshd -t -f.
+
+=========================================================================
+ЧТО ПОНАДОБИТСЯ
+=========================================================================
+
+Стенд из практики 1, все четыре машины включены:
+
+  control  10.0.2.5   — управляющая машина, отсюда все команды
+  web1     10.0.2.11  — Ubuntu 26.04 LTS, на ней nginx на порту 8080
+  web2     10.0.2.12  — Ubuntu 26.04 LTS
+  db1      10.0.2.13  — Rocky Linux 10
+
+ЧТО ДОЛЖНО БЫТЬ СДЕЛАНО РАНЬШЕ:
+
+  * инвентарь inventory.ini и ansible.cfg из практики 2, вход по ключу;
+  * практика 6: настраиваемый факт /etc/ansible/facts.d/site.fact
+    на узлах (из него motd берёт владельца машины);
+  * практика 11: drop-in файл /etc/ssh/sshd_config.d/20-sshd-hardening.conf
+    на web1. Это не тот файл, который собирает эта практика: шаблон
+    sshd_config.j2 пишет основной /etc/ssh/sshd_config. Drop-in из практик
+    8 и 11 остаётся на месте и продолжает действовать — строка Include
+    в нашем шаблоне стоит первой;
+  * на control в /etc/hosts добавлено имя сайта web1.ansible-lab.local;
+  * практики 9 и 10: веб-сервер поставлен и запущен на всём парке —
+    apache2 на web1 и web2, httpd на db1. Порт 80 ими занят, поэтому
+    nginx слушает 8080: так же это сделано в практике 15.
+
+ЧТО НУЖНО ИЗ РЕПОЗИТОРИЯ КУРСА — каталог files/12_jinja_configs/
+с семью шаблонами, двумя файлами переменных, пятью плейбуками
+и данными для lookup. Содержимое всех файлов, кроме README.md,
+напечатано ниже. Время: 3 академических часа. Второй сеанс SSH
+к web1 и db1 держите открытым: из него можно вернуть sshd_config.
+
+#########################################################################
+ЧАСТЬ 1. ШАБЛОНЫ ДЛЯ НАСТОЯЩИХ КОНФИГОВ
+#########################################################################
+
+=========================================================================
+ШАГ 1. ОТ СТРАНИЦЫ К КОНФИГУ: ЧТО МЕНЯЕТСЯ ПОСЛЕ ПРАКТИКИ 6
+=========================================================================
+
+У конфигурации службы цена ошибки выше, чем у страницы сайта: кривая
+вёрстка — неприятно, нерабочий sshd_config — машина, на которую
+не зайти. Отсюда три привычки, которых не было в практике 6:
+
+  * ВСЕ ЗНАЧЕНИЯ — ИЗ ПЕРЕМЕННЫХ: шаблон — форма, данные снаружи;
+  * ПРОБЕЛЫ КОНТРОЛИРУЮТСЯ ЯВНО: строка с {% for %} оставляет
+    в готовом файле свой отступ;
+  * КОНФИГУРАЦИЯ ПРОВЕРЯЕТСЯ ДО ПОДСТАНОВКИ: за это отвечает
+    параметр validate модуля template.
+
+ПОЧЕМУ ИМЕННО ТАК: конфигурация — это данные, а не код. Пока значения
+лежат в переменных, одна форма годится и для web1, и для стенда.
+
+=========================================================================
+ШАГ 2. ПЕРЕМЕННЫЕ И ВИРТУАЛЬНЫЙ ХОСТ
+=========================================================================
+
+Содержимое files/12_jinja_configs/vars/nginx.yml:
+  ---
+  # Переменные виртуального хоста nginx.
+  # Файл подключается плейбуком 01_nginx.yml через vars_files.
+
+  # Порт, который слушает виртуальный хост. 80 занят apache2:
+  # его поставили практики 9 и 10, и два веб-сервера на одном
+  # порту не уживаются. Поэтому nginx слушает 8080 — так же,
+  # как это сделано в практике 15.
+  nginx_port: 8080
+
+  # Имя, по которому отвечает сайт. В стенде DNS нет: запись
+  # web1.ansible-lab.local добавлена в /etc/hosts управляющей машины.
+  nginx_server_name: "web1.ansible-lab.local"
+
+  # Корень сайта и страница по умолчанию.
+  nginx_root: "/var/www/web1"
+  nginx_index: "index.html"
+
+  # Имя upstream из шаблона nginx_upstream.j2.
+  nginx_upstream_name: "app_backend"
+
+  # Бэкенды приложения. Это данные, а не текст шаблона:
+  # добавить машину — значит дописать элемент списка.
+  # enabled: false означает «машина есть, но трафик на неё не идёт».
+  nginx_backends:
+    - name: "web1"
+      address: "10.0.2.11:8080"
+      weight: 3
+      enabled: true
+    - name: "web2"
+      address: "10.0.2.12:8080"
+      weight: 1
+      enabled: true
+    - name: "db1"
+      address: "10.0.2.13:8080"
+      weight: 1
+      enabled: false
+
+  # Метки сайтов: имя сайта — метка. Строка в формате YAML,
+  # потому что так этот список отдаёт внешняя система.
+  # Шаблон превращает строку в данные фильтром from_yaml.
+  nginx_site_tags_raw: |
+    web1.ansible-lab.local: web1
+    web2.ansible-lab.local: web2
+    db1.ansible-lab.local: db1
+
+  # Что отдавать с диска, а что проксировать.
+  # type: static — файлы с диска, type: proxy — запрос в upstream.
+  nginx_locations:
+    - path: "/"
+      type: "static"
+    - path: "/static/"
+      type: "static"
+      expires: "7d"
+    - path: "/api/"
+      type: "proxy"
+
+  # Дополнительные заголовки. Если переменной нет,
+  # шаблон ничего не добавит: это проверяет тест is defined.
+  nginx_extra_headers:
+    - name: "X-Frame-Options"
+      value: "SAMEORIGIN"
+    - name: "X-Content-Type-Options"
+      value: "nosniff"
+
+  # Ограничение на размер тела запроса.
+  nginx_client_max_body_size: "10m"
+
+db1 стоит в списке с enabled: false: вывести машину из балансировки —
+значит поправить одно значение в переменных, а не шаблон. Содержимое
+files/12_jinja_configs/templates/nginx_vhost.j2:
+  # {{ ansible_managed }}
+  # Виртуальный хост {{ nginx_server_name }} собран из шаблона nginx_vhost.j2.
+  # В upstream уходят только пути nginx_locations с type: proxy.
+
+  server {
+      listen {{ nginx_port | default(8080) }};
+      listen [::]:{{ nginx_port | default(8080) }};
+      server_name {{ nginx_server_name }};
+
+      root {{ nginx_root }};
+      index {{ nginx_index }};
+      client_max_body_size {{ nginx_client_max_body_size | default('1m') }};
+
+      access_log /var/log/nginx/{{ nginx_server_name | regex_replace('[^A-Za-z0-9.-]', '_') }}.access.log;
+
+  {% for location in nginx_locations %}
+      location {{ location.path }} {
+  {% if location.type == 'proxy' %}
+          proxy_pass http://{{ nginx_upstream_name }};
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Site-Tag $site_tag;
+  {% else %}
+          root {{ location.root | default(nginx_root) }};
+  {% if location.expires is defined %}
+          expires {{ location.expires }};
+  {% endif %}
+  {% endif %}
+      }
+  {% endfor %}
+  {% if nginx_extra_headers is defined %}
+  {% for header in nginx_extra_headers %}
+      add_header {{ header.name }} "{{ header.value }}" always;
+  {% endfor %}
+  {% endif %}
+  }
+
+ВАЖНО: В КОНФИГЕ NGINX ЗНАК $ ПРИНАДЛЕЖИТ NGINX, А {{ }} — JINJA2.
+Строка proxy_set_header Host $host остаётся как есть: Jinja2 ищет
+только {{ }} и {% %}, а путаница начинается там, где $ ставят
+перед {{ }}.
+
+ПРОВЕРКА: соберите шаблон на управляющей машине, не трогая web1:
+  ansible localhost -m ansible.builtin.template \
+      -a "src=templates/nginx_vhost.j2 dest=/tmp/vhost.test" \
+      -e "@vars/nginx.yml"
+
+=========================================================================
+ШАГ 3. UPSTREAM: ЦИКЛ ПО БЭКЕНДАМ
+=========================================================================
+
+Содержимое files/12_jinja_configs/templates/nginx_upstream.j2:
+  # {{ ansible_managed }}
+  # Файл собран из шаблона nginx_upstream.j2.
+  # Бэкенды: {{ nginx_backends | map(attribute='name') | join(', ') }}
+  # Метки сайтов приходят строкой YAML: шаблон превращает её в данные.
+  {% set site_tags = nginx_site_tags_raw | from_yaml %}
+  {% set live_backends = nginx_backends | selectattr('enabled') | list %}
+
+  map $host $site_tag {
+  {% for site, tag in site_tags.items() %}
+      {{ '%-28s' | format(site) }} {{ tag }};
+  {% endfor %}
+      default                      unknown;
+  }
+
+  upstream {{ nginx_upstream_name }} {
+  {% for backend in live_backends %}
+      server {{ backend.address }} weight={{ backend.weight | default(1) }} max_fails={{ backend.max_fails | default(2) }};
+  {% endfor %}
+      keepalive {{ live_backends | length }};
+  }
+
+Здесь четыре приёма: map(attribute='name') | join(', ') собирает имена
+в строку; from_yaml превращает строку nginx_site_tags_raw в словарь,
+по которому идёт цикл по парам; selectattr('enabled') вместе с list
+отбирает включённые бэкенды (web1 и web2, но не db1); default(1)
+и default(2) подставляют значения, которых нет в данных.
+
+ПОЧЕМУ ИМЕННО ТАК: без | list фильтр length получил бы не список,
+а объект-генератор. Для строки в формате JSON есть фильтр from_json.
+
+=========================================================================
+ШАГ 4. ПЛЕЙБУК 01_nginx.yml И ПРОВЕРКА КОНФИГУРАЦИИ
+=========================================================================
+
+Содержимое files/12_jinja_configs/01_nginx.yml:
+  ---
+  # Практика 12, шаги 3–5: виртуальный хост nginx из шаблонов.
+  # Запуск: ansible-playbook 01_nginx.yml --diff
+  # Повторный прогон должен дать changed=0.
+  #
+  # nginx слушает 8080, а не 80: порт 80 на web1 и web2 занят apache2,
+  # который поставили практики 9 и 10. Пакет nginx ставит ещё и свой
+  # виртуальный хост по умолчанию, а тот слушает 80, поэтому плейбук
+  # его убирает.
+
+  - name: "Развернуть виртуальный хост nginx на web1"
+    hosts: web1
+    become: true
+    vars_files:
+      - vars/nginx.yml
+    handlers:
+      - name: "Перезапустить nginx"
+        ansible.builtin.systemd_service:
+          name: nginx
+          state: restarted
+          enabled: true
+    tasks:
+      - name: "Установить nginx из репозитория ОС (Debian)"
+        ansible.builtin.apt:
+          name: nginx
+          state: present
+          update_cache: true
+          cache_valid_time: 3600
+        when: ansible_os_family == "Debian"
+
+      - name: "Установить nginx из репозитория ОС (RedHat)"
+        ansible.builtin.dnf:
+          name: nginx
+          state: present
+        when: ansible_os_family == "RedHat"
+
+      - name: "Убрать виртуальный хост по умолчанию (Debian)"
+        ansible.builtin.file:
+          path: /etc/nginx/sites-enabled/default
+          state: absent
+        when: ansible_os_family == "Debian"
+        notify: Перезапустить nginx
+
+      - name: "Убрать виртуальный хост по умолчанию (RedHat)"
+        ansible.builtin.file:
+          path: /etc/nginx/conf.d/default.conf
+          state: absent
+        when: ansible_os_family == "RedHat"
+        notify: Перезапустить nginx
+
+      # Порт 8080 открывается отдельной задачей: на web1 включён ufw
+      # с политикой deny, и без правила curl с управляющей машины
+      # до nginx не дойдёт. Правило открывает порт из переменной
+      # nginx_port, поэтому порт в плейбуке не зашит.
+      - name: "Открыть порт nginx в межсетевом экране"
+        community.general.ufw:
+          rule: allow
+          port: "{{ nginx_port }}"
+          proto: tcp
+
+      - name: "Создать каталог сайта"
+        ansible.builtin.file:
+          path: "{{ nginx_root }}"
+          state: directory
+          owner: root
+          group: root
+          mode: "0755"
+
+      - name: "Положить страницу-заглушку в корень сайта"
+        ansible.builtin.copy:
+          content: "<h1>{{ inventory_hostname }}</h1>\n<p>Страница практики 12.</p>\n"
+          dest: "{{ nginx_root }}/{{ nginx_index }}"
+          owner: root
+          group: root
+          mode: "0644"
+
+      - name: "Развернуть upstream из шаблона nginx_upstream.j2"
+        ansible.builtin.template:
+          src: nginx_upstream.j2
+          dest: "/etc/nginx/conf.d/{{ nginx_upstream_name }}.conf"
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          validate: "nginx -t"
+          backup: true
+        notify: Перезапустить nginx
+
+      - name: "Развернуть виртуальный хост из шаблона nginx_vhost.j2"
+        ansible.builtin.template:
+          src: nginx_vhost.j2
+          dest: "/etc/nginx/conf.d/{{ nginx_server_name }}.conf"
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          validate: "nginx -t"
+          backup: true
+        notify: Перезапустить nginx
+
+      - name: "Проверить конфигурацию nginx целиком"
+        ansible.builtin.command:
+          cmd: nginx -t
+        changed_when: false
+
+Две задачи про виртуальный хост по умолчанию стоят здесь не для
+красоты. Пакет nginx ставит свой виртуальный хост, и на Ubuntu он
+лежит ссылкой /etc/nginx/sites-enabled/default, а на Rocky — файлом
+/etc/nginx/conf.d/default.conf. Оба слушают 80 — тот самый порт,
+который занят apache2 из практик 9 и 10. Пока чужой хост на месте,
+nginx не запустится: «bind() to 0.0.0.0:80 failed (98: Address
+already in use)». Наш виртуальный хост слушает 8080, поэтому хост
+по умолчанию убирается, а не правится.
+
+Первый прогон меняет семь задач — установку пакета, снятие чужого
+виртуального хоста, правило межсетевого экрана для 8080, каталог,
+страницу, upstream и свой виртуальный хост — и один раз запускает
+обработчик. Второй обязан дать changed=0.
+
+Модуль служб здесь записан как ansible.builtin.systemd_service: это
+каноническое имя в ansible-core 2.19. Прежнее имя
+ansible.builtin.systemd осталось синонимом — старые плейбуки
+и примеры из интернета с ним работают, но в новом тексте пишем
+systemd_service. Разбор модуля — в практике 9.
+
+ПРО ПАРАМЕТР validate ГОВОРИМ ЧЕСТНО. В задаче стоит validate: "nginx -t"
+без %s: проверка идёт до подмены файла и смотрит конфигурацию, которая
+уже лежит на узле. Фрагмент (server { ... } для conf.d) так проверить
+нельзя, и попытка написать validate: "nginx -t -c %s" падает
+с «nginx: [emerg] "server" directive is not allowed here»: директива
+server допустима только внутри блока http. Поэтому новый фрагмент
+проверяет отдельная задача nginx -t после того, как файл на месте.
+
+ПРИ НЕУДАЧНОЙ ПРОВЕРКЕ задача падает, файл на узле остаётся прежним,
+обработчик не вызывается, служба работает на старой конфигурации.
+ПОЧЕМУ ИМЕННО ТАК: backup: true оставляет рядом с новым файлом
+предыдущий, и откат — это копирование.
+
+=========================================================================
+ШАГ 5. SSHD_CONFIG: ЦИКЛ ПО СЛОВАРЮ ПАРАМЕТРОВ
+=========================================================================
+
+Содержимое files/12_jinja_configs/vars/sshd.yml:
+  ---
+  # Параметры sshd_config. Словарь: имя параметра — значение.
+  # Шаблон печатает его циклом по sshd_params.items(), поэтому порядок
+  # строк в файле совпадает с порядком ключей здесь. YAML порядок ключей
+  # сохраняет, и это важно: sshd_config читается сверху вниз, а при
+  # повторе одного параметра побеждает первый.
+  sshd_params:
+    Port: 22
+    AddressFamily: "any"
+    PermitRootLogin: "no"
+    PubkeyAuthentication: "yes"
+    PasswordAuthentication: "no"
+    KbdInteractiveAuthentication: "no"
+    PermitEmptyPasswords: "no"
+    MaxAuthTries: 4
+    MaxSessions: 4
+    LoginGraceTime: "30"
+    ClientAliveInterval: 300
+    ClientAliveCountMax: 2
+    X11Forwarding: "no"
+    AllowAgentForwarding: "no"
+    UsePAM: "yes"
+    PrintMotd: "no"
+    LogLevel: "INFO"
+
+  # Путь к файлу один и тот же, а вот имя службы и путь
+  # к подсистеме sftp различаются семейством ОС.
+  # Здесь Jinja2 работает не в шаблоне, а в переменной.
+  sshd_config_path: "/etc/ssh/sshd_config"
+  sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+  sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_os_family == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
+
+  # Если переменная определена, шаблон добавит строку AllowUsers.
+  sshd_allow_users:
+    - engineer
+
+Содержимое files/12_jinja_configs/templates/sshd_config.j2:
+  # {{ ansible_managed }}
+  # Файл собран из шаблона sshd_config.j2.
+  # Параметры берутся из словаря sshd_params в файле vars/sshd.yml.
+  # Это полный конфигурационный файл, поэтому его можно проверить
+  # целиком: validate: sshd -t -f %s.
+
+  # Drop-in файлы читаются первыми: если параметр задан и здесь, и там,
+  # sshd берёт значение из первого места, где он встретился.
+  Include /etc/ssh/sshd_config.d/*.conf
+
+  {% for key, value in sshd_params.items() %}
+  {{ '%-30s' | format(key) }} {{ value }}
+  {% endfor %}
+
+  Subsystem sftp {{ sshd_sftp_subsystem }}
+  {% if sshd_allow_users is defined %}
+  AllowUsers {{ sshd_allow_users | join(' ') }}
+  {% endif %}
+
+Цикл идёт по sshd_params.items() и печатает ключ и значение; фильтр
+format выравнивает ключ по ширине 30 символов, а строки Include,
+Subsystem и AllowUsers стоят вне цикла. ЧЕГО НЕ ДЕЛАТЬ: не заменяйте
+sshd_config целиком на удалённой машине без второго сеанса SSH
+и способа отката: наш шаблон не содержит ни HostKey, ни AcceptEnv.
+
+=========================================================================
+ШАГ 6. ПЛЕЙБУК 02_sshd.yml: validate: sshd -t -f %s
+=========================================================================
+
+Содержимое files/12_jinja_configs/02_sshd.yml:
+  ---
+  # Практика 12, шаги 6–7: sshd_config на web1 (Ubuntu) и db1 (Rocky).
+  # Запуск: ansible-playbook 02_sshd.yml --diff
+  # Перед запуском откройте второй сеанс SSH к узлам: шаблон
+  # заменяет файл целиком.
+
+  - name: "Настроить sshd из шаблона со словарём параметров"
+    hosts: linux
+    become: true
+    vars_files:
+      - vars/sshd.yml
+    handlers:
+      - name: "Перезапустить sshd"
+        ansible.builtin.systemd_service:
+          name: "{{ sshd_service }}"
+          state: restarted
+    tasks:
+      - name: "Собрать sshd_config из шаблона sshd_config.j2"
+        ansible.builtin.template:
+          src: sshd_config.j2
+          dest: "{{ sshd_config_path }}"
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          backup: true
+          validate: "sshd -t -f %s"
+        notify: Перезапустить sshd
+
+      - name: "Прочитать действующие параметры sshd"
+        ansible.builtin.command:
+          cmd: sshd -T
+        register: sshd_effective
+        changed_when: false
+
+      - name: "Проверить, что вход по паролю и для root запрещены"
+        ansible.builtin.assert:
+          that:
+            - "'passwordauthentication no' in (sshd_effective.stdout | lower)"
+            - "'permitrootlogin no' in (sshd_effective.stdout | lower)"
+          fail_msg: "Настройки sshd не применились: смотрите sshd_effective.stdout"
+          success_msg: "sshd принял параметры: PasswordAuthentication no, PermitRootLogin no"
+
+validate здесь проверяет полный конфигурационный файл: модуль
+записывает результат шаблона во временный файл, подставляет его путь
+вместо %s, запускает sshd -t и только при успехе меняет файл на узле.
+
+ПРОВЕРКА: обработчик один, а имя службы разное — ssh на Ubuntu
+и sshd на Rocky (значение sshd_service из файла переменных):
+  ansible linux -b -m ansible.builtin.command -a "sshd -T" \
+      | grep -E 'permitrootlogin|passwordauthentication'
+  permitrootlogin no
+  passwordauthentication no
+
+ЧЕГО НЕ ДЕЛАТЬ: не проверяйте sshd_config глазами как текст: файл
+может быть верным и не давать результата, если параметр перекрыт
+drop-in файлом выше по тексту.
+
+=========================================================================
+ШАГ 7. MOTD ИЗ ФАКТОВ И СПИСКА МАШИН
+=========================================================================
+
+Содержимое files/12_jinja_configs/templates/motd.j2:
+  {#- Шаблон /etc/motd. Собирается на каждой машине группы linux. -#}
+  {{ ansible_managed }}
+  =========================================================================
+    {{ inventory_hostname | upper }} — учебный стенд курса Ansible
+    {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})
+  =========================================================================
+
+  Машина:      {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
+  Ядер:        {{ ansible_processor_vcpus }}
+  Память, МБ:  {{ ansible_memtotal_mb }}
+  Группы:      {{ group_names | sort | join(', ') }}
+
+  Адреса машин группы linux:
+  {% for host in groups['linux'] %}
+  {% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
+  {% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+    {{ '%-6s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
+  {% endfor %}
+  Всего машин: {{ groups['linux'] | length }} ({% for host in groups['linux'] %}{{ host }}{{ ', ' if not loop.last else '' }}{% endfor %})
+  Владелец:    {{ ansible_local.site.general.owner | default('не назначен') }}
+  {% if motd_notice is defined %}
+
+  Объявление:
+  {{ motd_notice }}
+  {% endif %}
+
+Новые приёмы: адреса соседних машин берутся из hostvars; тест
+is defined плюс default закрывает случай, когда факта нет; loop.last
+не ставит запятую после последней машины. ЧЕГО НЕ ДЕЛАТЬ: не ставьте
+в конфиг значения, которые меняются сами (дату сборки, время работы
+машины): файл будет считаться изменённым на каждом прогоне.
+
+=========================================================================
+ШАГ 8. ПЛЕЙБУК 03_motd.yml: MOTD, RESOLV.CONF, CHRONY
+=========================================================================
+
+Содержимое files/12_jinja_configs/03_motd.yml:
+  ---
+  # Практика 12, шаги 8–9: motd, resolv.conf и chrony.conf из шаблонов.
+  # Запуск: ansible-playbook 03_motd.yml --diff
+
+  - name: "Разложить /etc/motd на всех машинах группы linux"
+    hosts: linux
+    become: true
+    tasks:
+      - name: "Собрать /etc/motd из шаблона motd.j2"
+        ansible.builtin.template:
+          src: motd.j2
+          dest: /etc/motd
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          backup: true
+
+  - name: "Настроить /etc/resolv.conf из переменных"
+    hosts: linux
+    become: true
+    vars:
+      resolv_nameservers:
+        - "10.0.2.3"
+        - "1.1.1.1"
+      resolv_search:
+        - "ansible-lab.local"
+      resolv_timeout: 2
+      resolv_attempts: 2
+    tasks:
+      - name: "Собрать /etc/resolv.conf из шаблона resolv.conf.j2"
+        ansible.builtin.template:
+          src: resolv.conf.j2
+          dest: /etc/resolv.conf
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          backup: true
+
+  - name: "Настроить chrony на машинах семейства RedHat"
+    hosts: redhat
+    become: true
+    vars:
+      chrony_config_path: "/etc/chrony.conf"
+      chrony_service: "chronyd"
+      chrony_driftfile: "/var/lib/chrony/drift"
+      chrony_logdir: "/var/log/chrony"
+      chrony_pools:
+        - "0.pool.ntp.org"
+        - "1.pool.ntp.org"
+      # В рабочей среде здесь адрес корпоративного сервера времени.
+      # В стенде такого сервера нет, поэтому список пуст: шаблон
+      # напечатает только строки pool.
+      chrony_servers: []
+    handlers:
+      - name: "Перезапустить chronyd"
+        ansible.builtin.systemd_service:
+          name: "{{ chrony_service }}"
+          state: restarted
+    tasks:
+      - name: "Собрать конфигурацию chrony из шаблона chrony.conf.j2"
+        ansible.builtin.template:
+          src: chrony.conf.j2
+          dest: "{{ chrony_config_path }}"
+          owner: root
+          group: root
+          mode: "0644"
+          trim_blocks: true
+          lstrip_blocks: true
+          backup: true
+        notify: Перезапустить chronyd
+
+      - name: "Включить chronyd в автозапуск и запустить"
+        ansible.builtin.systemd_service:
+          name: "{{ chrony_service }}"
+          state: started
+          enabled: true
+
+Три play: первый раскладывает motd на три узла группы linux; второй
+настраивает resolv.conf; третий ограничен группой redhat, потому что
+на Rocky Linux chrony есть по умолчанию.
+
+ВАЖНО: ПЕРЕД ВТОРЫМ PLAY ПОСМОТРИТЕ СВОЙ /etc/resolv.conf. Адрес
+10.0.2.3 — это DNS виртуальной сети стенда: если у вас другие адреса,
+поправьте resolv_nameservers, иначе перестанут разрешаться имена.
+
+#########################################################################
+ЧАСТЬ 2. ЧТО ОТЛИЧАЕТ РАБОТУ ОТ УЧЕБНОГО ПРИМЕРА
+#########################################################################
+
+=========================================================================
+ШАГ 9. RESOLV.CONF И CHRONY.CONF ИЗ ПЕРЕМЕННЫХ
+=========================================================================
+
+Содержимое files/12_jinja_configs/templates/resolv.conf.j2:
+  # {{ ansible_managed }}
+  # Файл собран из шаблона resolv.conf.j2.
+  # Значения — переменные resolv_*, заданные в плейбуке 03_motd.yml.
+
+  {% for server in resolv_nameservers %}
+  nameserver {{ server }}
+  {% endfor %}
+  {% if resolv_search is defined and resolv_search | length > 0 %}
+  search {{ resolv_search | join(' ') }}
+  {% endif %}
+  options timeout:{{ resolv_timeout | default(2) }} attempts:{{ resolv_attempts | default(2) }}
+
+Содержимое files/12_jinja_configs/templates/chrony.conf.j2:
+  # {{ ansible_managed }}
+  # Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_os_family | lower }}.
+
+  {% for pool in chrony_pools %}
+  pool {{ pool }} iburst
+  {% endfor %}
+  {% if chrony_servers | length > 0 %}
+  {% for server in chrony_servers %}
+  server {{ server.host }} {{ server.options | default('iburst') }}
+  {% endfor %}
+  {% endif %}
+  driftfile {{ chrony_driftfile }}
+  logdir {{ chrony_logdir }}
+  rtcsync
+  makestep 1.0 3
+  allow {{ chrony_allow | default('127.0.0.1') }}
+
+Два условия соединены союзом and: resolv_search должна быть определена
+И непуста — так не появится строка search без значений. Фильтр lower
+приводит семейство ОС к нужному регистру. Пустой список chrony_servers
+означает, что блок server не печатается: условие стоит снаружи цикла.
+
+=========================================================================
+ШАГ 10. TRIM_BLOCKS И LSTRIP_BLOCKS: ПУСТЫЕ СТРОКИ В КОНФИГЕ
+=========================================================================
+
+Это шаг, ради которого стоит прочитать практику целиком. Возьмём
+маленький шаблон с циклом и отступами:
+  upstream demo {
+  {% for backend in nginx_backends %}
+      server {{ backend.address }};
+      {% endfor %}
+  }
+
+ВАРИАНТ 1: trim_blocks: false, lstrip_blocks: false — значения
+по умолчанию самого Jinja2:
+  upstream demo {
+      server 10.0.2.11:8080;
+
+      server 10.0.2.12:8080;
+
+      server 10.0.2.13:8080;
+
+      }
+
+Пустые строки появились потому, что перевод строки после {% for %}
+и {% endfor %} остался в выводе.
+
+ВАРИАНТ 2: trim_blocks: true, lstrip_blocks: false — значения
+по умолчанию модуля template:
+  upstream demo {
+          server 10.0.2.11:8080;
+      server 10.0.2.12:8080;
+      server 10.0.2.13:8080;
+      
+  }
+
+Пустых строк нет, но отступ первой строки поехал, а последняя строка —
+четыре пробела без текста: отступы перед {% for %} и {% endfor %}
+остались в выводе и сложились с отступами тела цикла.
+
+ВАРИАНТ 3: trim_blocks: true и lstrip_blocks: true — то, что стоит
+во всех задачах этой практики — даёт ровно тот файл, который нужен:
+  upstream demo {
+      server 10.0.2.11:8080;
+      server 10.0.2.12:8080;
+      server 10.0.2.13:8080;
+  }
+
+ПОЧЕМУ ИМЕННО ТАК: trim_blocks убирает перевод строки после блока
+{% %}, lstrip_blocks — пробелы в начале строки перед блоком. Первый
+в модуле template включён по умолчанию, второй — нет, и именно из-за
+него в конфигах разъезжаются отступы. Мы пишем оба явно.
+
+ПРОВЕРКА: уберите из задачи lstrip_blocks, запустите плейбук
+с --diff и посмотрите строки, помеченные минусом и плюсом.
+
+=========================================================================
+ШАГ 11. ФИЛЬТРЫ И ТЕСТЫ, КОТОРЫЕ НУЖНЫ В КОНФИГАХ
+=========================================================================
+
+Фильтры в шаблонах встречаются постоянно: важно понимать, что фильтр
+берёт слева и что отдаёт справа. Ниже — фрагмент плейбука для
+проверки фильтров.
+  - name: "Показать работу фильтров и тестов"
+    hosts: web1
+    gather_facts: true
+    vars_files:
+      - vars/nginx.yml
+      - vars/sshd.yml
+    vars:
+      site_defaults:
+        title: "учебный стенд"
+        owner: "engineer"
+      site_override:
+        owner: "course"
+      none_value: null
+      log_path: "/var/log/nginx/access.log"
+    tasks:
+      - name: "Фильтры над списками и словарями"
+        ansible.builtin.debug:
+          msg:
+            - "map + join:      {{ nginx_backends | map(attribute='address') | join(', ') }}"
+            - "selectattr:      {{ nginx_backends | selectattr('enabled') | map(attribute='name') | join(', ') }}"
+            - "length:          {{ nginx_backends | length }}"
+            - "combine:         {{ site_defaults | combine(site_override) | to_nice_json }}"
+            - "default:         {{ nginx_undefined_var | default('значение по умолчанию') }}"
+            - "upper + lower:   {{ ansible_os_family | upper }} / {{ ansible_os_family | lower }}"
+
+      - name: "Фильтры над строками и путями"
+        ansible.builtin.debug:
+          msg:
+            - "regex_replace:   {{ nginx_server_name | regex_replace('[^A-Za-z0-9.-]', '_') }}"
+            - "basename:        {{ log_path | basename }}"
+            - "dirname:         {{ log_path | dirname }}"
+            - "b64encode:       {{ inventory_hostname | b64encode }}"
+
+      - name: "Тесты: что определено, что нет"
+        ansible.builtin.debug:
+          msg:
+            - "sshd_params определена:      {{ sshd_params is defined }}"
+            - "nginx_missing не определена: {{ nginx_missing is not defined }}"
+            - "файл vars/nginx.yml есть:    {{ (playbook_dir ~ '/vars/nginx.yml') is file }}"
+            - "значение none:               {{ none_value is none }}"
+
+Что печатает задача: map + join даёт строку адресов; selectattr
+оставляет только web1 и web2; length возвращает 3; combine сливает
+два словаря, и побеждает значение из второго (owner = course), а title
+остаётся из site_defaults; default спасает неопределённую переменную;
+basename и dirname режут путь; b64encode превращает строку в base64.
+
+ВАЖНО: ТЕСТ is file ПРОВЕРЯЕТ ФАЙЛ НА УПРАВЛЯЮЩЕЙ МАШИНЕ, А НЕ НА УЗЛЕ.
+Тесты is file, is directory и is link смотрят на файловую систему
+контроллера. Чтобы принять решение по файлу на узле, нужен модуль
+ansible.builtin.stat и его результат: stat.stat.isreg.
+
+=========================================================================
+ШАГ 12. LOOKUP: FILE, TEMPLATE, ENV
+=========================================================================
+
+Третий источник данных — файлы и окружение управляющей машины:
+текст объявления, тег сборки, имя окружения в CI.
+
+Содержимое files/12_jinja_configs/data/notice.txt:
+  ВНИМАНИЕ: на стенде идут учебные работы.
+  Конфигурации машин управляются Ansible: правки руками будут перезаписаны.
+  Если что-то сломалось — обратитесь к преподавателю, а не правьте файл.
+
+Содержимое files/12_jinja_configs/templates/notice.j2:
+  {#- Шаблон рендерит lookup('template', ...) на управляющей машине. -#}
+  Объявление для {{ inventory_hostname }} ({{ ansible_os_family }})
+  Стенд: {{ site_title | default('учебный стенд курса Ansible') }}
+  Источник: {{ lab_notice_source | basename }}
+  Строк в тексте: {{ lab_notice_text | default('') | length }}
+
+Содержимое files/12_jinja_configs/04_lookup.yml:
+  ---
+  # Практика 12, шаг 12: подстановки из внешних источников.
+  # Все три lookup выполняются на управляющей машине.
+  # Запуск: ansible-playbook 04_lookup.yml
+
+  - name: "Показать, откуда шаблон берёт данные"
+    hosts: linux
+    become: true
+    vars:
+      lab_notice_source: "{{ playbook_dir }}/data/notice.txt"
+      lab_notice_template: "{{ playbook_dir }}/templates/notice.j2"
+    tasks:
+      - name: "Прочитать текст объявления с управляющей машины"
+        ansible.builtin.set_fact:
+          lab_notice_text: "{{ lookup('file', lab_notice_source) }}"
+
+      - name: "Взять тег объявления из окружения управляющей машины"
+        ansible.builtin.set_fact:
+          lab_notice_tag: "{{ lookup('env', 'LAB_NOTICE_TAG') | default('учебный стенд', true) }}"
+
+      - name: "Собрать объявление шаблоном на управляющей машине"
+        ansible.builtin.set_fact:
+          lab_notice_rendered: "{{ lookup('template', lab_notice_template) }}"
+
+      - name: "Показать, что получилось"
+        ansible.builtin.debug:
+          msg:
+            - "Файл: {{ lab_notice_source | basename }} ({{ lab_notice_text | length }} символов)"
+            - "Каталог: {{ lab_notice_source | dirname }}"
+            - "Тег: {{ lab_notice_tag | upper }}"
+            - "Первая строка: {{ lab_notice_text.splitlines() | first }}"
+            - "В base64: {{ lab_notice_text | b64encode }}"
+
+      - name: "Положить объявление на узел"
+        ansible.builtin.copy:
+          content: "{{ lab_notice_rendered }}\nТег: {{ lab_notice_tag }}\n"
+          dest: /etc/lab-notice
+          owner: root
+          group: root
+          mode: "0644"
+
+lookup('file', путь) читает файл с управляющей машины и отдаёт его
+содержимое строкой; lookup('env', 'ИМЯ') читает переменную окружения
+процесса, из которого запущен ansible-playbook (удобно в CI);
+lookup('template', путь) рендерит шаблон на управляющей машине
+и отдаёт готовый текст, но с переменными той машины, для которой
+выполняется задача. Файл на узле не создаётся.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: такие значения не относятся ни к одной машине
+парка — их держат на управляющей машине, рядом с плейбуком.
+
+ВАЖНО: ФАЙЛ, КОТОРЫЙ ЛЕЖИТ НА УЗЛЕ, ЧИТАЕТСЯ НЕ LOOKUP: lookup смотрит
+на управляющую машину, а содержимое файла с узла читает
+ansible.builtin.slurp.
+
+=========================================================================
+ШАГ 13. SLURP: ПРОЧИТАТЬ ФАЙЛ С УЗЛА И СРАВНИТЬ С ШАБЛОНОМ
+=========================================================================
+
+Последний вопрос практики: файл на узле точно такой, каким его сделал
+Ansible? Содержимое files/12_jinja_configs/05_slurp.yml:
+  ---
+  # Практика 12, шаг 13: прочитать файл с узла и сравнить с шаблоном.
+  # Запуск: ansible-playbook 05_slurp.yml
+  # Плейбук ничего не меняет: changed=0 должен быть и в первый раз.
+
+  - name: "Прочитать /etc/motd с узла и сравнить с шаблоном"
+    hosts: web1
+    become: true
+    tasks:
+      - name: "Прочитать файл с узла модулем slurp"
+        ansible.builtin.slurp:
+          src: /etc/motd
+        register: motd_remote
+
+      - name: "Показать размер и первую строку прочитанного файла"
+        ansible.builtin.debug:
+          msg: >-
+            Прочитано {{ motd_remote.content | b64decode | length }} символов;
+            первая строка: {{ (motd_remote.content | b64decode).splitlines() | first }}
+
+      - name: "Собрать тот же файл из шаблона на управляющей машине"
+        ansible.builtin.set_fact:
+          motd_rendered: "{{ lookup('template', playbook_dir ~ '/templates/motd.j2') }}"
+
+      - name: "Сравнить файл на узле с тем, что даёт шаблон"
+        ansible.builtin.assert:
+          that:
+            - "(motd_remote.content | b64decode | trim) == (motd_rendered | trim)"
+          fail_msg: "Файл на узле отличается от шаблона: кто-то правил /etc/motd руками."
+          success_msg: "Файл на узле совпадает с шаблоном motd.j2."
+
+slurp читает файл на узле и отдаёт его в base64, а b64decode возвращает
+текст; lookup('template', ...) собирает ожидаемое содержимое тем же
+шаблоном motd.j2; assert сравнивает два текста, а trim снимает вопрос
+о завершающем переводе строки. ЧЕГО НЕ ДЕЛАТЬ: не сравнивайте файлы
+контрольными суммами, если хотите понять, чем они отличаются: md5
+скажет «разные», но не покажет где.
+
+ПРОВЕРКА: прогоните плейбук, испортьте файл на узле и прогоните снова:
+  ansible-playbook 05_slurp.yml
+  ansible web1 -b -m ansible.builtin.command \
+      -a "sed -i '1i КТО-ТО ПРАВИЛ ЭТОТ ФАЙЛ' /etc/motd"
+  ansible-playbook 05_slurp.yml
+
+Первый прогон даёт changed=0, второй падает на assert: конфигурацией
+на узле управляет Ansible, а не человек.
+
+=========================================================================
+ШАГ 14. JINJA2 ВНЕ ШАБЛОНОВ: WHEN, ИМЯ ЗАДАЧИ, LOOP, VARS
+=========================================================================
+
+В WHEN — БЕЗ ДВОЙНЫХ ФИГУРНЫХ СКОБОК:
+  when: nginx_backends | selectattr('enabled') | list | length > 0
+  when: ansible_os_family == "Debian" and nginx_port | int == 8080
+
+В ИМЕНИ ЗАДАЧИ — МОЖНО И НУЖНО: имя печатается в отчёте, и по нему
+потом ищут, что сломалось:
+  - name: "Развернуть виртуальный хост {{ nginx_server_name }}"
+
+В LOOP — ЧЕРЕЗ ВЫРАЖЕНИЕ, С ФИЛЬТРОМ И LIST: без | list в loop попадёт
+объект-генератор, и задача упадёт.
+  - name: "Создать каталоги площадок"
+    ansible.builtin.file:
+      path: "/var/www/{{ item.name }}"
+      state: directory
+      mode: "0755"
+    loop: "{{ nginx_backends | selectattr('enabled') | list }}"
+    loop_control:
+      label: "{{ item.name }}"
+
+В VARS — КАК АЛЬТЕРНАТИВА ВЕТВЛЕНИЮ:
+  vars:
+    sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+
+ЧЕГО НЕ ДЕЛАТЬ: не переносите в шаблон решения о том, что делать:
+шаблон формирует текст, а выбор «ставить пакет или не ставить»
+остаётся за задачами.
+
+=========================================================================
+ШАГ 15. ШАБЛОН КАК КОД: ГДЕ ХРАНИТЬ И ЧТО НЕ ПОПАДЁТ В ФАЙЛ
+=========================================================================
+
+Шаблон — такой же код, как плейбук: он живёт в репозитории, у него
+есть версии, его читают на ревью. КОММЕНТАРИИ. Внутри шаблона
+работают комментарии Jinja2:
+  {#- Шаблон /etc/motd. Собирается на каждой машине группы linux. -#}
+
+В готовый файл такой комментарий не попадает: он для того, кто читает
+шаблон. А обычный комментарий «#» попадает, и это правильно: тот, кто
+откроет готовый конфиг на узле, увидит, что файл собран Ansible.
+
+ГДЕ ХРАНИТЬ: шаблоны лежат в templates/ рядом с плейбуком или в роли,
+данные для lookup — в data/, переменные — в vars/. ЧТО НЕ ДОЛЖНО
+ПОПАДАТЬ В ШАБЛОН: значения, которые отличаются от машины к машине;
+решения вида «если это боевая площадка, добавить ещё upstream» (это
+задача); секреты — пароль из Vault (практика 5) приходит в шаблон
+переменной, но в готовом файле окажется открытым текстом.
+
+ОГЛАВЛЕНИЕ КАТАЛОГА: files/12_jinja_configs/README.md перечисляет
+все шаблоны, переменные и плейбуки с указанием шага практики, порядок
+их запуска и то, на что обратить внимание.
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+ПРОБЛЕМА: nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)
+
+  nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)
+  nginx: [emerg] still could not bind()
+  fatal: [web1]: FAILED! => {"changed": false,
+      "msg": "Unable to restart service nginx: Job for nginx.service failed"}
+
+Порт 80 занят apache2 из практик 9 и 10, а nginx пытается занять его
+своим виртуальным хостом по умолчанию: на Ubuntu это ссылка
+/etc/nginx/sites-enabled/default, на Rocky — файл
+/etc/nginx/conf.d/default.conf. Наш виртуальный хост слушает 8080,
+а чужой убирают задачи «Убрать виртуальный хост по умолчанию»
+в 01_nginx.yml. Порядок проверки:
+  1. Посмотреть, кто держит порт 80:
+     ssh engineer@web1 'sudo ss -ltnp | grep :80'
+  2. Проверить, что чужой виртуальный хост снят:
+     ls -l /etc/nginx/sites-enabled/
+  3. Проверить, что в vars/nginx.yml стоит nginx_port: 8080, а в готовом
+     файле на узле — строка listen 8080.
+
+То же сообщение видно в journalctl -u nginx: пакет nginx запускает
+службу сразу после установки, ещё до того, как плейбук уберёт чужой
+виртуальный хост.
+
+ПРОБЛЕМА: AnsibleUndefinedVariable: 'nginx_root' is undefined
+
+  fatal: [web1]: FAILED! => {"changed": false,
+      "msg": "AnsibleUndefinedVariable: 'nginx_root' is undefined"}
+
+Причины: файл переменных не подключён к play, опечатка в имени,
+переменная определена для другой группы. Порядок проверки:
+  1. Сверить vars_files упавшего play.
+  2. Спросить Ansible: ansible web1 -m ansible.builtin.debug -a "var=nginx_root"
+  3. Убедиться, что play идёт по нужной машине: здесь hosts: web1.
+
+ПРОБЛЕМА: jinja2.exceptions.TemplateSyntaxError: unexpected '}'
+
+  fatal: [web1]: FAILED! => {"changed": false,
+      "msg": "template error while templating string: unexpected '}'"}
+
+Разбор выражения остановился на закрывающей скобке: в строке шаблона
+лишняя или непарная скобка. Сообщение указывает строку. Порядок
+проверки:
+  1. Посчитать пары в указанной строке: grep -n '{{' и grep -n '}}'.
+  2. Проверить шаблон, не трогая узлы:
+     ansible localhost -m ansible.builtin.template \
+         -a "src=templates/nginx_vhost.j2 dest=/tmp/vhost.test" \
+         -e "@vars/nginx.yml"
+  3. Посмотреть, не попали ли в выражение двоеточие или точка
+     с запятой внутри {{ }}.
+
+ПРОБЛЕМА: template error while templating string
+
+  fatal: [web1]: FAILED! => {"changed": false, "msg": "template error while
+      templating string: expected token 'end of print statement', got ':'.
+      String: server {{ backend.address:8080 }};"}
+
+Смесь синтаксисов: внутри {{ }} записали конструкцию из конфига.
+Порядок проверки:
+  1. Найти строку из поля String и посмотреть, что стоит внутри {{ }}.
+  2. Проверить данные: ansible web1 -m ansible.builtin.debug -a "var=nginx_backends"
+  3. Разделять работу: данные готовит файл переменных, шаблон только
+     подставляет их.
+
+ПРОБЛЕМА: лишние пустые строки и съехавшие отступы в конфиге
+
+  --- before: /etc/nginx/conf.d/web1.ansible-lab.local.conf
+  +++ after: /etc/nginx/conf.d/web1.ansible-lab.local.conf
+   upstream app_backend {
+  -    server 10.0.2.11:8080 weight=3;
+  +        server 10.0.2.11:8080 weight=3;
+  +
+  +        server 10.0.2.12:8080 weight=1;
+
+Строки появляются, когда у шаблона выключен lstrip_blocks (а в старых
+руководствах — ещё и trim_blocks). Порядок проверки:
+  1. Посмотреть задачу: там должны быть trim_blocks: true
+     и lstrip_blocks: true.
+  2. Сравнить шаблон с выводом на управляющей машине:
+     ansible localhost -m ansible.builtin.template \
+         -a "src=templates/nginx_upstream.j2 dest=/tmp/up.test" \
+         -e "@vars/nginx.yml"
+     cat -A /tmp/up.test | head -20
+  3. Помнить, что пустая строка после {% endfor %} съедается
+     trim_blocks: для настоящего пробела нужно две пустые строки.
+
+ПРОБЛЕМА: nginx: [emerg] unknown directive "proxypass"
+
+  nginx: [emerg] unknown directive "proxypass" in
+      /etc/nginx/conf.d/web1.ansible-lab.local.conf:23
+  fatal: [web1]: FAILED! => {"changed": false,
+      "msg": "Unable to restart service nginx: Job for nginx.service failed"}
+
+Директива с опечаткой попала в готовый файл. Порядок проверки:
+  1. Прочитать строку из сообщения и сравнить её с шаблоном.
+  2. Найти источник строки: значение переменной или данные, которые
+     шаблон разобрал фильтром from_yaml.
+  3. Проверить конфигурацию целиком: nginx -t на узле.
+
+nginx перезапускается только после успешной проверки: если задача
+шаблона прошла, а новая строка оказалась неверной, следующая задача
+nginx -t упадёт и обработчик не выполнится. Откат — вернуть файл
+из копии, которую оставил backup: true.
+
+ПРОБЛЕМА: nginx: [emerg] unknown "web1" variable
+
+  nginx: [emerg] unknown "web1" variable
+  fatal: [web1]: FAILED! => {"changed": false, "msg": "nginx: configuration
+      file /etc/nginx/nginx.conf test failed"}
+
+В шаблоне написано ${{ site_tag }}: Jinja2 подставила значение (web1),
+а знак $ остался, и nginx ищет переменную с именем web1, которой нет.
+Правило: $ — для nginx, {{ }} — для Jinja2. Порядок проверки:
+  1. Найти в шаблонах места, где $ стоит перед {{:
+     grep -n '\${{' templates/*.j2
+     Переменные nginx ($host, $remote_addr, $site_tag) пишутся
+     без фигурных скобок.
+  2. Проверить, что переменная определена: $site_tag приходит
+     из блока map в файле nginx_upstream.j2.
+  3. После правки шаблона прогнать плейбук и убедиться, что nginx -t
+     проходит.
+
+ПРОБЛЕМА: страница из шаблона открывается, но картинок нет, а файл
+не удаётся исправить
+
+  <img src="" alt="Схема стенда">
+  -r-xr-xr-x 1 root root 1024 мая 12 10:20 /var/www/html/index.html
+
+ИСПРАВЛЕНО: это разбор прежней версии курса, где шаблон index.j2
+содержал четыре пустых img src="", содержимое сайта копировалось
+с правами mode=0555, а в задаче стояли два ключа notify. Пустой
+src=" " заставляет браузер запрашивать саму страницу как картинку.
+Права 0555 означают, что файл нельзя поправить на узле, не сняв
+права, а на каталоге они мешают положить туда новый файл. Два ключа
+notify в одной задаче — ошибка YAML: остаётся последний, и обработчик
+для первого события теряется. В новой версии: пустых src нет, права
+на содержимое сайта — mode: "0644", на каталоги — mode: "0755".
+
+=========================================================================
+ПРОВЕРКА РЕЗУЛЬТАТА
+=========================================================================
+
+Практика выполнена, если выполняются все пункты.
+
+1. Виртуальный хост собран из шаблона: nginx -t на web1 отвечает
+   «configuration file /etc/nginx/nginx.conf test is successful».
+
+2. Сайт отвечает по имени, и именно на порту 8080:
+     curl -s http://web1.ansible-lab.local:8080/
+     <h1>web1</h1>
+   Порт 80 nginx не слушает: там apache2 из практик 9 и 10. Поэтому
+   по адресу http://10.0.2.11/ ответит страница практики 10, а не
+   страница практики 12. Порт 8080 открыт в межсетевом экране самим
+   плейбуком: без этого правила ufw не пропустил бы запрос с control.
+
+3. Путь /api/ уходит в upstream, а приложения на стенде нет:
+     curl -s -o /dev/null -w '%{http_code}\n' http://web1.ansible-lab.local:8080/api/
+     502
+   Ответ 502 ожидаем: приложения, к которому адресован /api/,
+   на стенде не установлено.
+
+4. sshd_config разложен на два семейства:
+     ansible linux -b -m ansible.builtin.command -a "sshd -T" \
+         | grep -E 'permitrootlogin|passwordauthentication'
+     permitrootlogin no
+     passwordauthentication no
+
+5. motd собран из фактов на всех машинах группы linux:
+     ansible linux -b -m ansible.builtin.command -a "grep Всего /etc/motd"
+   Три строки «Всего машин: 3».
+
+6. Файл на узле совпадает с шаблоном, а повторный прогон ничего
+   не меняет:
+     ansible-playbook 05_slurp.yml
+     ok: [web1] — «Файл на узле совпадает с шаблоном motd.j2.»
+     ansible-playbook 01_nginx.yml --diff | tail -2
+     web1 : ok=8 changed=0 unreachable=0 failed=0 skipped=2
+
+   В play десять задач, две из них пропущены: play идёт по web1,
+   а ветка RedHat — не для неё (установка пакета через dnf и снятие
+   /etc/nginx/conf.d/default.conf). Остальные восемь задач дают ok,
+   и только обработчик перезапуска в первом прогоне добавлял changed.
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Далее в курсе:
+
+  * практика 13 — хранилище: диски, LVM, файловые системы;
+  * практика 14 — сложные проекты: шаблоны переедут в роли;
+  * практика 15 — Galaxy и системные роли RHEL: сравним свой
+    шаблон nginx с ролью geerlingguy.nginx — она встанет на тот же
+    порт 8080 и рядом с apache2 на 80.
+
+УБЕРИТЕ ЗА СОБОЙ только временные файлы проверок и учебное объявление:
+конфигурации нужны следующим практикам. nginx на 8080 останавливать
+не нужно: он не мешает apache2 на 80.
+  rm -f /tmp/vhost.test /tmp/up.test
+  ansible linux -b -m ansible.builtin.file \
+      -a "path=/etc/lab-notice state=absent"

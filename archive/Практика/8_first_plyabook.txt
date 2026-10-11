@@ -1,0 +1,56 @@
+Создадим наш playbook в папке проекта
+vim playbook1.yml
+---
+- name: Test conection to linux servers
+  hosts: linux_servers
+  become: yes
+
+  tasks:
+  
+  - name: Ping my servers
+    ping:
+...
+сохраняем и закрываем
+теперь давайте запустим и проверим
+ansible-playbook playbook1.yml
+создадим ещё один плейбук
+vim playbook2.yml
+---
+- name: Install apache web server
+  hosts: linux_servers
+  become: yes
+
+  tasks:
+  - name: Install Apache
+    apt: name=apache2
+
+  - name: Start Apache
+    service: name=apache2 state=started enabled=yes
+сохраняем и закрываем
+теперь давайте запустим и проверим
+ansible-playbook playbook2.yml
+
+создадим ещё один плейбук
+vim playbook3.yml
+---
+- name: Install Apache and upload web-site
+  hosts: linux_servers
+  become: yes
+
+  vars:
+   source_file: /home/engineer/ansible/index.html
+   destin_file: /var/www/html
+
+  tasks:
+  - name: Install Apache
+    apt: name=apache2
+
+  - name: Copy web-site
+    copy: src={{ source_file }} dest={{ destin_file }} mode=0555
+    notife: Restart Apache
+
+  - name: Start Apache
+    service: name=apache2 state=started enabled=yes
+  handlers:
+  - name: Restart Apache
+    service: name=apache2 state=restarted

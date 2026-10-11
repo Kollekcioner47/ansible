@@ -1,0 +1,1623 @@
+Практика 9. Административные задачи.
+
+ЭТА ПРАКТИКА О ТОМ, ЧТО АДМИНИСТРАТОР ДЕЛАЕТ КАЖДЫЙ ДЕНЬ: ПОЛЬЗОВАТЕЛИ
+И ПРАВА, ПАКЕТЫ И РЕПОЗИТОРИИ, СЛУЖБЫ, МЕЖСЕТЕВОЙ ЭКРАН, ВРЕМЯ,
+РАСПИСАНИЕ ЗАДАЧ И ПАРАМЕТРЫ ЯДРА. МЫ СОБИРАЕМ ОДИН ПЛЕЙБУК, КОТОРЫЙ
+ПРИВОДИТ ПАРК К ОПИСАННОМУ СОСТОЯНИЮ.
+
+
+=========================================================================
+ЧТО МЫ СДЕЛАЕМ
+=========================================================================
+
+Договоримся, что считаем результатом, и разложим файлы практики
+в рабочий каталог. Опишем переменные по семействам ОС. Создадим
+пользователя с паролем и ключом, удалим лишнюю учётную запись вместе
+с её домашним каталогом. Опишем правило sudo файлом в /etc/sudoers.d
+из шаблона и проверим его до того, как оно попадёт на место. Поставим
+набор пакетов на Ubuntu и на Rocky Linux одной лестницей задач
+и подключим репозиторий на каждом семействе. Приведём в порядок
+службы и добавим свой таймер systemd из шаблона. Откроем веб-сервер
+наружу двумя разными модулями — ufw и firewalld — и разберёмся,
+почему это одно намерение. Зададим часовой пояс, ежедневную задачу
+cron и параметр ядра. Разберём перезагрузку с ожиданием возврата
+узла. Соберём всё в один плейбук admin_tasks.yml и добьёмся того,
+чтобы повторный прогон дал changed=0.
+
+
+=========================================================================
+ЧТО ПОНАДОБИТСЯ
+=========================================================================
+
+СТЕНД ИЗ ПРАКТИК 1 И 2. Три управляемые машины:
+
+  web1  10.0.2.11  — Ubuntu 26.04 LTS
+  web2  10.0.2.12  — Ubuntu 26.04 LTS
+  db1   10.0.2.13  — Rocky Linux 10
+
+Управляющая машина control (10.0.2.5) в инвентаре не описана: ей
+не управляют, с неё управляют. Поэтому «весь парк» в этой практике —
+три машины, а не четыре.
+
+ЧТО ДОЛЖНО БЫТЬ ГОТОВО:
+  * инвентарь inventory.ini, файл ansible.cfg и каталоги group_vars
+    и host_vars — практика 2;
+  * вход по ключу engineer без пароля и sudo без запроса пароля —
+    практика 1;
+  * веб-сервер, поставленный плейбуком практики 7: дальше мы будем
+    не ставить его, а описывать его состояние.
+
+ФАЙЛЫ ПРАКТИКИ лежат в каталоге files/09_admin_tasks:
+
+  * files/09_admin_tasks/02_users.yml              — шаг 3
+  * files/09_admin_tasks/03_sudoers.yml            — шаг 4
+  * files/09_admin_tasks/04_packages.yml           — шаг 5
+  * files/09_admin_tasks/05_services.yml           — шаг 6
+  * files/09_admin_tasks/06_firewall.yml           — шаг 7
+  * files/09_admin_tasks/07_reboot.yml             — шаг 9
+  * files/09_admin_tasks/admin_tasks.yml           — шаг 10
+  * files/09_admin_tasks/vars/Debian.yml           — шаг 2
+  * files/09_admin_tasks/vars/RedHat.yml           — шаг 2
+  * files/09_admin_tasks/templates/                — шаги 4 и 6
+  * files/09_admin_tasks/README.md                 — что это за файлы
+
+ВРЕМЯ: 2 академических часа. Примерно половина уходит на набор текста
+плейбуков, поэтому готовые файлы из каталога курса можно скопировать.
+
+ИНТЕРНЕТ НА УЗЛАХ нужен: мы ставим пакеты и подключаем репозиторий.
+Без него шаги 5 и 8 не пройдут, а остальные — пройдут.
+
+
+#########################################################################
+ЧАСТЬ 1. БАЗОВЫЕ ШАГИ: ПОЛЬЗОВАТЕЛИ, ПАКЕТЫ, СЛУЖБЫ, ЭКРАН
+#########################################################################
+
+
+=========================================================================
+ШАГ 1. ЧТО ЗНАЧИТ «ПРИВЕСТИ ПАРК К СОСТОЯНИЮ»
+=========================================================================
+
+В практике 4 мы поставили веб-сервер и запустили службу, в практике 7
+научились выбирать ветку по семейству ОС. Там было одно намерение —
+«на машине есть работающий веб-сервер». Здесь намерений становится
+десяток, и каждое описывается своей задачей. Разница не в синтаксисе,
+а в том, что теперь плейбук отвечает на вопрос «какой должна быть
+машина», а не «что сегодня надо сделать».
+
+Список намерений для нашего парка выглядит так:
+
+  * на машинах есть учётная запись для выкладки с ключом и паролем;
+  * лишней учётной записи нет — вместе с её домашним каталогом;
+  * правило sudo описано файлом, который перед установкой проверен;
+  * набор административных пакетов установлен, репозиторий подключён;
+  * веб-сервер запущен и включён в автозапуск;
+  * есть свой таймер systemd, который раз в сутки пишет отчёт;
+  * на Ubuntu работает ufw, на Rocky — firewalld, порт 80 открыт;
+  * часовой пояс, задача cron и параметр ядра заданы;
+  * базовая проверка: повторный прогон не меняет ничего.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: именно этот список, а не команды, попадает
+в документацию и в систему контроля версий. Прочитав его, коллега
+понимает, что произойдёт с машинами, не читая YAML.
+
+ПОЧЕМУ ИМЕННО ТАК: обратный порядок — «сначала команды, потом
+описание» — работает, пока машин две. На парке из тридцати машин
+список из десяти команд уже никто не удержит в голове.
+
+ЧТО НЕ ВХОДИТ В ЭТО СОСТОЯНИЕ: перезагрузка. «Машина перезагружена»
+не проверяется повторным прогоном: она уже загружена. Поэтому
+перезагрузка живёт отдельным плейбуком (шаг 9), а не в admin_tasks.yml.
+
+
+=========================================================================
+ШАГ 2. РАСКЛАДЫВАЕМ ФАЙЛЫ: ПЕРЕМЕННЫЕ ПО СЕМЕЙСТВАМ
+=========================================================================
+
+Копируем файлы практики в рабочий каталог курса. Каталоги templates
+и vars копируются целиком — плейбуки ссылаются на них по именам:
+
+  cd ~/ansible-lab
+  cp -r /путь/к/репозиторию/files/09_admin_tasks/. .
+  ls
+  ansible.cfg  group_vars  host_vars  inventory.ini  templates  vars
+  02_users.yml  03_sudoers.yml  04_packages.yml  05_services.yml
+  06_firewall.yml  07_reboot.yml  admin_tasks.yml
+
+Теперь главное в этом шаге — переменные. Различия между Ubuntu и Rocky
+Linux мы не размазываем по задачам условиями when, а собираем в два
+файла. Вот файл для Ubuntu — files/09_admin_tasks/vars/Debian.yml:
+
+  ---
+  # Переменные семейства Debian (Ubuntu 26.04): web1 и web2.
+  # Файл читается задачей ansible.builtin.include_vars в pre_tasks.
+
+  # Пакеты, службы и группы, которые на Ubuntu называются иначе, чем
+  # на Rocky Linux. Значения совпадают с group_vars/debian.yml из
+  # практики 2: это один и тот же реестр сущностей курса.
+  web_package: apache2
+  web_service: apache2
+  firewall_package: ufw
+  firewall_service: ufw
+  cron_package: cron
+  cron_service: cron
+  sudo_group: sudo
+
+  # Одно намерение «веб-сервер доступен снаружи» в двух видах:
+  # порт для правил ufw и имя службы для firewalld.
+  web_port: 80
+  firewalld_service: http
+
+  # Часовой пояс стенда. Учебное значение: в рабочей среде часовой
+  # пояс берут из стандарта площадки, а не из головы.
+  lab_timezone: Europe/Moscow
+
+  # Пакеты, которые нужны на каждой машине этого семейства.
+  # python3-debian — требование модуля ansible.builtin.deb822_repository:
+  # без библиотеки debian модуль не работает.
+  admin_packages:
+    - mc
+    - curl
+    - "{{ cron_package }}"
+    - tzdata
+    - python3-debian
+    - "{{ web_package }}"
+
+А вот файл для Rocky Linux — files/09_admin_tasks/vars/RedHat.yml.
+Имена переменных те же, значения другие:
+
+  ---
+  # Переменные семейства RedHat (Rocky Linux 10): db1.
+  # Файл читается задачей ansible.builtin.include_vars в pre_tasks.
+
+  # Те же имена, что и в Debian.yml, но другие значения: в этом
+  # и смысл переменных по семейству ОС.
+  web_package: httpd
+  web_service: httpd
+  firewall_package: firewalld
+  firewall_service: firewalld
+  cron_package: cronie
+  cron_service: crond
+  sudo_group: wheel
+
+  # Порт веб-сервера и имя службы для firewalld: то же намерение,
+  # что и на Ubuntu, но выражено зоной и именем службы.
+  web_port: 80
+  firewalld_service: http
+
+  lab_timezone: Europe/Moscow
+
+  # python3-firewall — Python-модуль, через который
+  # ansible.posix.firewalld разговаривает с firewalld.
+  admin_packages:
+    - mc
+    - curl
+    - "{{ cron_package }}"
+    - tzdata
+    - python3-firewall
+    - "{{ web_package }}"
+
+Файл выбирается по факту ansible_os_family, значение которого —
+Debian или RedHat. Подключается он задачей include_vars, и это
+единственное место в плейбуках, где встречается имя семейства:
+
+  pre_tasks:
+    - name: Прочитать переменные для семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+ПОЧЕМУ ИМЕННО ТАК: include_vars читает файл во время прогона, когда
+факты уже собраны, поэтому «vars/{{ ansible_os_family }}.yml»
+превращается в vars/Debian.yml на web1 и в vars/RedHat.yml на db1.
+Читается он в pre_tasks — до первой задачи, которой нужны переменные.
+
+ВАЖНО: те же имена (web_package, web_service, firewall_package) уже
+заданы в group_vars/debian.yml и group_vars/redhat.yml из практики 2,
+и значения совпадают — так требует единый реестр сущностей курса.
+Если одно значение лежит в двух местах, рано или поздно они
+разойдутся, и победит то, что прочитано позже: у include_vars
+приоритет выше, чем у group_vars.
+
+ПРОВЕРКА: посмотрите, как Ansible видит переменные на каждой машине:
+
+  ansible web1 -m ansible.builtin.debug -a "var=web_package"
+  web1 | SUCCESS => {
+      "web_package": "apache2"
+  }
+  ansible db1 -m ansible.builtin.debug -a "var=web_package"
+  db1 | SUCCESS => {
+      "web_package": "httpd"
+  }
+
+Если на db1 вы увидели apache2, значит, файл RedHat.yml не читается:
+проверьте имя файла (регистр букв важен) и значение ansible_os_family.
+
+
+=========================================================================
+ШАГ 3. ПОЛЬЗОВАТЕЛИ И ГРУППЫ
+=========================================================================
+
+Первый файл практики — files/09_admin_tasks/02_users.yml:
+
+  ---
+  # 02_users.yml — практика 9, шаг 3: пользователи, группы и ключ.
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook 02_users.yml
+
+  - name: Пользователи и группы на парке Linux
+    hosts: linux
+    become: true
+
+    vars:
+      # Открытый ключ engineer с управляющей машины (сделан в практике 1).
+      engineer_public_key: /home/engineer/.ssh/id_ed25519.pub
+      # Учебный пароль Console47. В плейбук попадает только хэш:
+      # фильтр password_hash считает его на управляющей машине.
+      # Соль задана явно, иначе хэш менялся бы на каждом прогоне.
+      deploy_password: "{{ 'Console47' | password_hash('sha512', 'ansible9salt') }}"
+
+    pre_tasks:
+      - name: Прочитать переменные для семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+    tasks:
+      - name: Создать группу для службы выкладки
+        ansible.builtin.group:
+          name: deploy
+          state: present
+
+      - name: Создать пользователя deploy
+        ansible.builtin.user:
+          name: deploy
+          comment: "Учебная учётная запись для выкладки"
+          group: deploy
+          groups: "{{ sudo_group }}"
+          append: true
+          shell: /bin/bash
+          create_home: true
+          password: "{{ deploy_password }}"
+          state: present
+
+      - name: Раздать пользователю deploy открытый ключ engineer
+        ansible.posix.authorized_key:
+          user: deploy
+          key: "{{ lookup('file', engineer_public_key) }}"
+          exclusive: true
+          state: present
+
+      - name: Убрать учебного пользователя intern вместе с каталогом
+        ansible.builtin.user:
+          name: intern
+          state: absent
+          remove: true
+
+Запускаем (вывод сокращён):
+
+  ansible-playbook 02_users.yml
+
+  TASK [Создать пользователя deploy]
+  changed: [web1]
+  changed: [web2]
+  changed: [db1]
+
+  TASK [Убрать учебного пользователя intern вместе с каталогом]
+  ok: [web1]
+  ok: [web2]
+  ok: [db1]
+
+  PLAY RECAP
+  db1  : ok=5  changed=3  unreachable=0  failed=0  skipped=0
+  web1 : ok=5  changed=3  unreachable=0  failed=0  skipped=0
+  web2 : ok=5  changed=3  unreachable=0  failed=0  skipped=0
+
+Последняя задача показала ok, а не changed: пользователя intern
+на машинах нет, удалять нечего. Так и должно быть — модуль описал
+состояние «этой учётной записи нет», а не выполнил команду удаления.
+
+ПАРОЛЬ ПЕРЕДАЁТСЯ ХЭШЕМ, А НЕ ТЕКСТОМ. В /etc/shadow не может лежать
+пароль: там лежит его криптографический хэш. Поэтому и модулю
+ansible.builtin.user в параметр password передают хэш. Считать его
+можно фильтром Jinja2 password_hash; строка выше подставляет
+учебное значение Console47 и получает хэш вида $6$ansible9salt$...
+
+ПОЧЕМУ ИМЕННО ТАК: у фильтра password_hash второй аргумент — соль.
+Если её не указать, Ansible возьмёт случайную, и хэш при каждом прогоне
+будет другим. Пароль останется рабочим, но задача каждый раз будет
+показывать changed, а плейбук навсегда потеряет идемпотентность.
+Поэтому соль фиксируют в переменной или берут из Vault.
+
+ЧЕГО НЕ ДЕЛАТЬ: не пишите в password сам пароль:
+password: "Console47". Модуль предупредит, что значение не похоже
+на хэш, но при некоторых настройках всё равно запишет его в shadow —
+и вход по нему работать не будет. Хуже другое: открытый пароль уедет
+в репозиторий, в историю прогонов и в журналы. В практике 5 для
+такого значения есть Vault, и в рабочем проекте хэш берут оттуда.
+
+РАЗБОР ПАРАМЕТРОВ ЗАДАЧИ «Создать пользователя deploy»: name — имя
+учётной записи, comment — описание в /etc/passwd (нужно для аудита),
+group — основная группа, groups вместе с append: true — дополнительные
+группы (append добавляет к существующим, а не заменяет их списком),
+shell — оболочка входа, create_home: true — домашний каталог,
+password — хэш пароля, state: present — учётная запись должна быть.
+
+Группа подставляется переменной sudo_group: на Ubuntu это sudo,
+на Rocky — wheel. Именно из-за этого различия мы и читаем vars.
+
+ПОЧЕМУ УДАЛЕНИЕ ТРЕБУЕТ remove: true. Задача «Убрать пользователя
+intern» описывает состояние state: absent, и модуль вызывает userdel.
+Без remove: true userdel удаляет только записи в /etc/passwd,
+/etc/shadow и /etc/group, а домашний каталог /home/intern остаётся
+на диске вместе с файлами, историей и, возможно, ключами. С remove: true
+добавляется ключ --remove: удаляется и домашний каталог с почтовым
+ящиком. Иначе каталог может достаться новому пользователю с тем же
+именем, и тот получит чужие файлы: классическая находка аудита.
+
+ВАЖНО: remove: true удаляет данные безвозвратно. Перед удалением
+учётной записи в рабочей среде смотрят, чьи процессы от неё работают
+и нет ли в её каталоге чего-то нужного:
+
+  ps -u intern
+  sudo ls -la /home/intern
+
+ЗАЧЕМ ЭТО В РАБОТЕ: разделение «человек» и «служба» — обычная
+практика. У службы своя учётная запись, свой ключ и минимум прав;
+личную учётную запись увольняющегося удаляют, а не «отключают пароль».
+
+ЧТО ДЕЛАЕТ exclusive: TRUE у authorized_key. Он приводит файл
+authorized_keys к состоянию «ровно этот ключ и ничего больше»:
+лишние строки удаляются. Для служебной учётной записи это правильно,
+а для живой учётной записи инженера опасно: одна задача закроет все
+остальные его ключи. Наш стенд работает с deploy, а не с engineer,
+и это сделано намеренно.
+
+ПРОВЕРКА: зайдите на web1 и посмотрите результат глазами:
+
+  ansible web1 -b -m ansible.builtin.command -a "id deploy"
+  uid=1001(deploy) gid=1001(deploy) groups=1001(deploy),27(sudo)
+
+  ansible web1 -b -m ansible.builtin.command -a "ls -ld /home/deploy /home/intern"
+  drwxr-x--- 2 deploy deploy 4096 ... /home/deploy
+  ls: cannot access '/home/intern': No such file or directory
+
+Вторая команда — то, что нам нужно: каталога нет.
+
+
+=========================================================================
+ШАГ 4. SUDO ИЗ ШАБЛОНА
+=========================================================================
+
+Правило sudo описано файлом в /etc/sudoers.d. Плейбук
+files/09_admin_tasks/03_sudoers.yml:
+
+  ---
+  # 03_sudoers.yml — практика 9, шаг 4: правило sudo из шаблона.
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook 03_sudoers.yml
+
+  - name: Правило sudo из шаблона
+    hosts: linux
+    become: true
+
+    vars:
+      # Имя пользователя, которому разрешён sudo без пароля.
+      sudo_user: engineer
+
+    tasks:
+      - name: Создать файл sudoers для engineer
+        ansible.builtin.template:
+          src: templates/engineer-nopass.j2
+          dest: /etc/sudoers.d/engineer-nopass
+          owner: root
+          group: root
+          mode: "0440"
+          validate: "/usr/sbin/visudo -cf %s"
+
+Содержимое шаблона — files/09_admin_tasks/templates/engineer-nopass.j2:
+
+  # {{ ansible_managed }}
+  # Учебный стенд: команда sudo не запрашивает пароль.
+  # В рабочей среде так не делают: любой, кто получил доступ
+  # к учётной записи, немедленно получает root без единого вопроса.
+  {{ sudo_user }} ALL=(ALL) NOPASSWD: ALL
+
+ПОЧЕМУ ИМЕННО ТАК:
+  * отдельный файл в /etc/sudoers.d вместо правки /etc/sudoers:
+    основной файл остаётся нетронутым, а наше правило можно удалить
+    одной задачей с state: absent;
+  * права "0440" и владелец root:root. При других правах sudo молча
+    игнорирует файл — правило просто не работает, и понять почему
+    без проверки трудно;
+  * validate: "/usr/sbin/visudo -cf %s" — проверка до установки.
+    Модуль кладёт новое содержимое во временный файл, подставляет его
+    путь вместо %s, запускает visudo и только при успехе заменяет
+    целевой файл. Абсолютный путь надёжнее короткого visudo: под
+    become переменная PATH может не содержать /usr/sbin.
+
+ЧЕГО НЕ ДЕЛАТЬ: не создавайте файлы sudoers без validate. Синтаксическая
+ошибка в правиле ломает sudo целиком, и машина остаётся без повышения
+прав: ни Ansible, ни инженер не смогут выполнить ни одной задачи
+с become. Вылечить это можно только консолью гипервизора или загрузкой
+в однопользовательском режиме. Проверка стоит одну задачу и спасает
+от этой ситуации.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: файл в /etc/sudoers.d — стандартный способ выдать
+права конкретной группе людей или службе, не превращая /etc/sudoers
+в общий файл, который все правят руками и никто не проверяет.
+
+ВАЖНО: файл /etc/sudoers.d/engineer-nopass уже существует — мы создали
+его руками в практике 1, содержимое было короче. Поэтому первый прогон
+покажет changed, а второй — уже нет. Это хороший пример того, как
+плейбук приводит к своему виду то, что когда-то сделали руками.
+
+Запускаем и смотрим окно изменения:
+
+  ansible-playbook 03_sudoers.yml --diff
+
+  TASK [Создать файл sudoers для engineer]
+  ...
+   engineer ALL=(ALL) NOPASSWD: ALL
+  changed: [web1]
+
+ПРОВЕРКА: убедитесь, что sudo по-прежнему работает и что вы не заперли
+себя:
+
+  ansible web1 -b -m ansible.builtin.command -a "/usr/sbin/visudo -cf /etc/sudoers.d/engineer-nopass"
+  /etc/sudoers.d/engineer-nopass: parsed OK
+
+  ansible web1 -m ansible.builtin.command -a "sudo -n true"
+
+Пустой вывод и код возврата 0 — это ответ «sudo без пароля работает».
+
+
+=========================================================================
+ШАГ 5. ПАКЕТЫ И РЕПОЗИТОРИИ
+=========================================================================
+
+Файл files/09_admin_tasks/04_packages.yml целиком:
+
+  ---
+  # 04_packages.yml — практика 9, шаг 5: пакеты, кэш и репозитории.
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook 04_packages.yml
+
+  - name: Пакеты и репозитории
+    hosts: linux
+    become: true
+
+    pre_tasks:
+      - name: Прочитать переменные для семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+    tasks:
+      - name: Обновить кэш пакетов, если он старше часа (Debian)
+        ansible.builtin.apt:
+          update_cache: true
+          cache_valid_time: 3600
+        when: ansible_os_family == "Debian"
+
+      - name: Убрать пакеты, ставшие ненужными (Debian)
+        ansible.builtin.apt:
+          autoremove: true
+        when: ansible_os_family == "Debian"
+
+      - name: Установить пакеты по одному (Debian)
+        ansible.builtin.apt:
+          name: "{{ item }}"
+          state: present
+        loop: "{{ admin_packages }}"
+        loop_control:
+          label: "{{ item }}"
+        when: ansible_os_family == "Debian"
+
+      - name: Установить пакеты по одному (RedHat)
+        ansible.builtin.dnf:
+          name: "{{ item }}"
+          state: present
+        loop: "{{ admin_packages }}"
+        loop_control:
+          label: "{{ item }}"
+        when: ansible_os_family == "RedHat"
+
+      - name: Подключить репозиторий с исходниками Ubuntu (Debian)
+        ansible.builtin.deb822_repository:
+          name: ubuntu-sources
+          types: deb-src
+          uris: http://archive.ubuntu.com/ubuntu
+          suites: "{{ ansible_distribution_release }}"
+          components:
+            - main
+            - universe
+          signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          state: present
+        when: ansible_os_family == "Debian"
+        notify: Обновить кэш apt
+
+      - name: Подключить репозиторий EPEL (RedHat)
+        ansible.builtin.yum_repository:
+          name: epel
+          description: Extra Packages for Enterprise Linux $releasever - $basearch
+          baseurl: https://dl.fedoraproject.org/pub/epel/$releasever/Everything/$basearch/
+          gpgcheck: true
+          gpgkey: https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-$releasever
+          enabled: true
+          state: present
+        when: ansible_os_family == "RedHat"
+
+    handlers:
+      - name: Обновить кэш apt
+        ansible.builtin.apt:
+          update_cache: true
+        when: ansible_os_family == "Debian"
+
+РАЗБОР. apt и dnf — разные модули, и это не наша прихоть: у каждого
+свой пакетный менеджер. Задачи-близнецы с одинаковыми параметрами
+здесь честнее, чем попытка написать одну задачу на два семейства:
+видно, что работа отличается ровно одним словом.
+
+КОГДА ПРИГОДИТСЯ ansible.builtin.package: когда задача делает одно
+и то же и параметры модулей совпадают. Мы используем его в шаге 7
+для установки пакета межсетевого экрана.
+
+update_cache И cache_valid_time. Пакетные менеджеры работают
+по локальному списку пакетов, и его надо обновлять. update_cache: true
+означает «обнови список перед установкой», а без cache_valid_time
+это лишний поход в интернет при каждом прогоне. cache_valid_time: 3600
+говорит «обновляй, только если списку больше часа», — именно поэтому
+второй прогон через минуту ничего не качает.
+
+autoremove — уборка зависимостей, которые больше никому не нужны.
+Это единственный режим, где модулю не нужен параметр name: он просто
+выполняет уборку и сообщает changed только тогда, когда что-то
+действительно удалил. На свежем стенде удалять нечего, поэтому
+задача отвечает ok.
+
+В СПИСКЕ ПАКЕТОВ СТОЯТ ПЕРЕМЕННЫЕ: строки "{{ cron_package }}"
+и "{{ web_package }}". На Ubuntu это cron и apache2, на Rocky — cronie
+и httpd, поэтому один список подходит обоим семействам.
+
+ПОЧЕМУ ИМЕННО ТАК — про loop. Здесь мы ставим пакеты циклом
+по списку, чтобы было видно, что происходит с каждым. Так делают,
+когда у элементов разные параметры: например, один пакет нужен
+в состоянии present, а другой — absent. Если параметры одинаковые,
+список передают модулю целиком:
+
+  ansible.builtin.apt:
+    name: "{{ admin_packages }}"
+
+Модуль поставит всё одной транзакцией: быстрее и без промежуточных
+состояний. В итоговом плейбуке (шаг 10) мы сделаем именно так,
+а в этом шаге loop оставлен для наглядности.
+
+ВАЖНО: модуль ansible.builtin.deb822_repository работает только
+на Debian-семействе и требует на узле библиотеку python-debian.
+Именно поэтому пакет python3-debian лежит в списке admin_packages
+в vars/Debian.yml. Забудете его — модуль упадёт с сообщением, что
+не может импортировать библиотеку debian.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: репозиторий на машине — ещё один источник
+пакетов, а значит, ещё один канал, через который на машину попадает
+код. Поэтому репозиторий описывают кодом (какой, откуда, с какой
+подписью), а не добавляют руками по инструкции из интернета.
+
+ПРОВЕРКА: смотрим, что получилось на каждом семействе.
+
+  ansible web1 -b -m ansible.builtin.command -a "ls /etc/apt/sources.list.d/"
+  ubuntu-sources.sources
+
+  ansible db1 -b -m ansible.builtin.command -a "dnf repolist epel"
+  epel      Extra Packages for Enterprise Linux 10    12784
+
+Число пакетов будет другим — важно, что репозиторий виден.
+
+
+=========================================================================
+ШАГ 6. СЛУЖБЫ И СВОЙ ТАЙМЕР
+=========================================================================
+
+Файл files/09_admin_tasks/05_services.yml:
+
+  ---
+  # 05_services.yml — практика 9, шаг 6: службы и свой таймер systemd.
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook 05_services.yml
+
+  - name: Службы и свой таймер systemd
+    hosts: linux
+    become: true
+
+    pre_tasks:
+      - name: Прочитать переменные для семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+    tasks:
+      - name: Веб-сервер запущен, включён в автозапуск и не заблокирован
+        ansible.builtin.systemd_service:
+          name: "{{ web_service }}"
+          state: started
+          enabled: true
+          masked: false
+
+      - name: Положить юнит проверки часового пояса
+        ansible.builtin.template:
+          src: templates/timezone-check.service.j2
+          dest: /etc/systemd/system/timezone-check.service
+          owner: root
+          group: root
+          mode: "0644"
+
+      - name: Положить таймер проверки часового пояса
+        ansible.builtin.template:
+          src: templates/timezone-check.timer.j2
+          dest: /etc/systemd/system/timezone-check.timer
+          owner: root
+          group: root
+          mode: "0644"
+
+      - name: Включить и запустить таймер
+        ansible.builtin.systemd_service:
+          name: timezone-check.timer
+          state: started
+          enabled: true
+          daemon_reload: true
+
+Два юнита лежат в шаблонах. Служба — файл
+files/09_admin_tasks/templates/timezone-check.service.j2:
+
+  [Unit]
+  Description=Проверка часового пояса узла {{ inventory_hostname }}
+
+  [Service]
+  Type=oneshot
+  ExecStart=/usr/bin/timedatectl show --property=Timezone
+
+Таймер — files/09_admin_tasks/templates/timezone-check.timer.j2:
+
+  [Unit]
+  Description=Ежедневная проверка часового пояса
+
+  [Timer]
+  OnCalendar=daily
+  Persistent=true
+  Unit=timezone-check.service
+
+  [Install]
+  WantedBy=timers.target
+
+Здесь важно всё:
+  * имя таймера и имя службы совпадают до первой точки. Поэтому
+    в таймере достаточно указать Unit=timezone-check.service, но мы
+    пишем его явно — читается лучше;
+  * Type=oneshot — служба, которая отработала и завершилась. Она
+    не «работает в фоне», а делает одно дело;
+  * OnCalendar=daily — расписание. Persistent=true означает, что
+    пропущенный из-за выключенной машины запуск будет выполнен
+    после включения;
+  * секция [Install] нужна таймеру: без WantedBy=timers.target
+    команда enable не сработает. У службы секции [Install] нет
+    намеренно — её запускает таймер, а не загрузка системы.
+
+ПОЧЕМУ ИМЕННО ТАК: state: started, а не state: restarted. started
+описывает состояние «служба работает» и ничего не делает, если она
+уже работает. restarted — это действие: служба перезапускается при
+каждом прогоне, даже если ничего не менялось. Для веб-сервера это
+означает секунды недоступности на ровном месте, а для базы данных —
+оборванные соединения.
+
+ЧЕГО НЕ ДЕЛАТЬ: не ставьте state: restarted в задачу, которая просто
+описывает состояние. Перезапуск нужен ровно там, где изменился
+конфигурационный файл, и в Ansible для этого есть обработчик:
+
+  - name: Конфигурация веб-сервера
+    ansible.builtin.template:
+      src: templates/site.conf.j2
+      dest: /etc/apache2/sites-available/site.conf
+    notify: Перезапустить веб-сервер
+
+Обработчик сработает только при изменении файла и один раз в конце
+play. Обработчики разобраны в практике 7.
+
+ВОЗМОЖНОСТИ ansible.builtin.systemd_service, которые нужны на практике:
+  * enabled: true — включить в автозапуск;
+  * masked: false — снять блокировку. Заблокированный юнит нельзя
+    запустить вообще, даже вручную, пока его не разблокируют;
+  * daemon_reload: true — заставить systemd перечитать файлы юнитов
+    до выполнения операции;
+  * state: started / stopped — состояние службы;
+  * name — имя юнита. Для таймера указывается с расширением:
+    timezone-check.timer.
+
+ВАЖНО: модуль называется ansible.builtin.systemd_service —
+в ansible-core 2.19 это каноническое имя, и в курсе пишем именно его.
+Прежнее имя ansible.builtin.systemd осталось синонимом: плейбуки
+и примеры из интернета с ним работают, но в новом тексте выбирайте
+systemd_service.
+
+ПОЧЕМУ daemon_reload: TRUE СТОИТ РЯДОМ С НОВЫМ ЮНИТОМ. Мы только что
+положили файл в /etc/systemd/system. systemd о нём ещё не знает:
+список юнитов читается при загрузке и по команде daemon-reload.
+Без daemon_reload задача «Включить и запустить таймер» падает
+с сообщением, что такого юнита нет, — хотя файл на месте.
+
+Кстати, обработчик тут не поможет: обработчики выполняются в конце
+play, то есть после этой задачи. Приём «выполнить обработчики
+досрочно» — meta: flush_handlers, он появится в практике 10.
+
+ВАЖНО: перезапускать парк служб «на всякий случай» нельзя. У каждой
+службы свой момент, когда перезапуск безопасен. Ansible описывает
+состояние, а решение о перезапуске принимает либо обработчик, либо
+инженер.
+
+ПРОВЕРКА: таймер виден и включён:
+
+  ansible web1 -b -m ansible.builtin.command -a "systemctl list-timers timezone-check.timer --no-pager"
+  NEXT                        LEFT    UNIT                  ACTIVATES
+  Wed 2026-10-14 00:00:00 MSK 6h left timezone-check.timer timezone-check.service
+
+Прогнать службу вручную, не дожидаясь ночи:
+
+  ansible web1 -b -m ansible.builtin.command -a "systemctl start timezone-check.service"
+  ansible web1 -b -m ansible.builtin.command -a "journalctl -u timezone-check.service -n 5 --no-pager"
+  Timezone=Europe/Moscow
+
+Timezone=Europe/Moscow — вывод timedatectl: служба отработала.
+Часовой пояс мы зададим в шаге 8.
+
+
+=========================================================================
+ШАГ 7. МЕЖСЕТЕВОЙ ЭКРАН: UFW И FIREWALLD
+=========================================================================
+
+Файл files/09_admin_tasks/06_firewall.yml:
+
+  ---
+  # 06_firewall.yml — практика 9, шаг 7: одно намерение двумя модулями.
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook 06_firewall.yml
+
+  - name: "Межсетевой экран: веб-сервер доступен снаружи"
+    hosts: linux
+    become: true
+
+    pre_tasks:
+      - name: Прочитать переменные для семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+    tasks:
+      - name: Поставить пакет межсетевого экрана
+        ansible.builtin.package:
+          name: "{{ firewall_package }}"
+          state: present
+
+      - name: Включить и запустить службу межсетевого экрана
+        ansible.builtin.service:
+          name: "{{ firewall_service }}"
+          state: started
+          enabled: true
+
+      - name: Открыть порты на Ubuntu (ufw)
+        when: ansible_os_family == "Debian"
+        block:
+          - name: Разрешить 22/tcp, иначе следующий прогон не подключится
+            community.general.ufw:
+              rule: allow
+              port: "22"
+              proto: tcp
+
+          - name: Разрешить порт веб-сервера
+            community.general.ufw:
+              rule: allow
+              port: "{{ web_port }}"
+              proto: tcp
+
+          - name: Включить ufw с политикой deny для входящих
+            community.general.ufw:
+              state: enabled
+              policy: deny
+              direction: incoming
+
+      - name: Открыть службу http на Rocky (firewalld)
+        when: ansible_os_family == "RedHat"
+        block:
+          - name: Разрешить службу http в зоне public
+            ansible.posix.firewalld:
+              service: "{{ firewalld_service }}"
+              zone: public
+              permanent: true
+              immediate: true
+              state: enabled
+
+ОДНО НАМЕРЕНИЕ, ДВА МОДУЛЯ. Намерение формулируется словами:
+«веб-сервер должен быть доступен снаружи, остальное входящее —
+закрыто». На Ubuntu это выражается правилами ufw, на Rocky — службой
+в зоне firewalld. Оба модуля делают одно и то же, но разными
+средствами, и это не дублирование, а две реализации одного решения.
+
+ПОЧЕМУ ИМЕННО ТАК:
+  * ansible.builtin.package вместо apt и dnf: операция одна и та же,
+    параметры совпадают, различие уже спрятано в переменной;
+  * ansible.builtin.service для самой службы: нам нужно только
+    «запущена и включена», а переносимость здесь бесплатна;
+  * block с when по семейству — приём из практики 7: ветка из трёх
+    и более задач читается лучше, чем три задачи с одинаковым when.
+
+ЧЕГО НЕ ДЕЛАТЬ: на Ubuntu нельзя включать ufw, не разрешив SSH.
+Политика по умолчанию для входящих — deny. Значит, включение ufw
+без правила 22/tcp закрывает управляющей машине доступ к узлу.
+Обратите внимание на порядок задач: сначала правила, потом
+state: enabled. Это не стилистика, а условие работоспособности.
+
+ПОЧЕМУ НА ROCKY ТОГО ЖЕ ШАГА НЕ НУЖНО: в зоне public у firewalld
+служба ssh разрешена изначально. Это различие не Ansible, а систем:
+у ufw и firewalld разные представления о настройках по умолчанию.
+Проверять надо оба.
+
+ПЕРЕМЕННАЯ, КОТОРАЯ СВЯЗЫВАЕТ ДВЕ ВЕТКИ. В vars лежат рядом
+web_port: 80 и firewalld_service: http. Это одно и то же намерение
+в двух представлениях: ufw работает портами и протоколами,
+firewalld — именами служб в зонах. Держать их рядом в одном файле
+полезно: меняя порт, вы видите, что рядом есть имя службы, которую
+тоже придётся поменять.
+
+ЧТО ТАКОЕ ЗОНА. firewalld описывает правила наборами для зон: public,
+trusted, internal. Зона — это «насколько машина доверяет тому, откуда
+пришёл пакет». Наш интерфейс попадает в public по умолчанию, поэтому
+правило добавляется именно туда.
+
+ЧТО ДЕЛАЮТ permanent И immediate. permanent: true записывает правило
+в постоянную конфигурацию (оно переживёт перезагрузку), immediate: true
+применяет его немедленно. Нужны оба: с одним permanent правило
+заработает только после перезагрузки, с одним immediate исчезнет
+после неё.
+
+ВАЖНО: модуль ansible.posix.firewalld разговаривает с запущенным
+демоном firewalld через Python-модуль firewall. Если служба не
+запущена, задача падает с сообщением FirewallD is not running, как
+бы аккуратно ни был написан плейбук. Поэтому задача «Включить
+и запустить службу межсетевого экрана» стоит до правил.
+
+ПРОВЕРКА: смотрим правила на обеих системах.
+
+  ansible web1 -b -m ansible.builtin.command -a "ufw status verbose"
+  Default: deny (incoming), allow (outgoing), disabled (routed)
+  22/tcp                     ALLOW IN    Anywhere
+  80/tcp                     ALLOW IN    Anywhere
+
+  ansible db1 -b -m ansible.builtin.command -a "firewall-cmd --zone=public --list-all"
+    services: cockpit dhcpv6-client http ssh
+
+Обратите внимание: в списке служб Rocky есть http и ssh, а в списке
+правил Ubuntu — 22/tcp и 80/tcp. Результат один, запись разная.
+
+
+=========================================================================
+ШАГ 8. ВРЕМЯ, CRON, ПАРАМЕТРЫ ЯДРА
+=========================================================================
+
+Три задачи, которых не было в шагах: они сразу пишутся в итоговый
+файл admin_tasks.yml. Первая — часовой пояс. Значение переменной
+lab_timezone одно для всего стенда:
+
+      - name: Часовой пояс стенда
+        community.general.timezone:
+          name: "{{ lab_timezone }}"
+
+Модуль community.general.timezone работает и на Ubuntu, и на Rocky:
+он знает и про /etc/timezone, и про /etc/sysconfig/clock. Данные
+о часовых поясах лежат в пакете tzdata — он есть в списке
+admin_packages, поэтому задача не зависит от того, что успел
+поставить установщик ОС.
+
+Вторая задача — ежедневный отчёт о свободном месте. Здесь важно
+не столько содержимое, сколько способ:
+
+      - name: "Ежедневная задача cron: отчёт о свободном месте"
+        ansible.builtin.cron:
+          name: "Проверка свободного места"
+          minute: "30"
+          hour: "3"
+          user: root
+          job: "/usr/bin/df -h > /var/log/df-daily.log 2>&1"
+          state: present
+
+Третья — параметр ядра. Модуль ansible.posix.sysctl умеет и записать
+параметр в файл, и применить его к работающему ядру:
+
+      - name: Не принимать ICMP-редиректы
+        ansible.posix.sysctl:
+          name: net.ipv4.conf.all.accept_redirects
+          value: "0"
+          state: present
+          sysctl_set: true
+          reload: true
+
+ПОЧЕМУ ИМЕННО ТАК:
+  * cron, а не строки в crontab: модуль ищет запись по имени name,
+    поэтому повторный запуск не создаёт вторую строку, а правка
+    через shell с echo >> /etc/crontab создаёт дубликаты;
+  * sysctl_set: true — применить значение сейчас, не дожидаясь
+    перезагрузки: модуль выполняет sysctl -w, если текущее значение
+    отличается от нужного;
+  * reload: true — перечитать файл настроек, если он изменился;
+  * value: "0" — строка в кавычках: кавычки снимают вопрос о типах,
+    а параметры ядра часто требуют именно строку.
+
+ЧЕГО НЕ ДЕЛАТЬ: не пишите расписание командой вида
+shell: "(crontab -l; echo '30 3 * * * df -h') | crontab -".
+Этот приём кочует из статьи в статью. Второй прогон добавит вторую
+строку, третий — третью, а искать причину будут по журналам, где
+видно только «задача выполнилась успешно».
+
+ЗАЧЕМ ЭТО В РАБОТЕ: часовой пояс и параметры ядра — то, что на
+парке из тридцати машин почти всегда настроено по-разному. После
+такого плейбука они одинаковы, и это проверяется, а не обсуждается.
+
+ПРОВЕРКА: три команды, по одной на задачу.
+
+  ansible all -b -m ansible.builtin.command -a "timedatectl show --property=Timezone"
+  Timezone=Europe/Moscow
+
+  ansible all -b -m ansible.builtin.command -a "crontab -l -u root"
+  30 3 * * * /usr/bin/df -h > /var/log/df-daily.log 2>&1
+
+  ansible all -b -m ansible.builtin.command -a "sysctl -n net.ipv4.conf.all.accept_redirects"
+  0
+
+Все три ответа одинаковы на трёх машинах — это и есть «приведено
+к состоянию». Модуль cron находит свою запись по маркеру #Ansible,
+поэтому рядом с задачей в crontab стоит комментарий.
+
+
+=========================================================================
+ШАГ 9. ПЕРЕЗАГРУЗКА С ОЖИДАНИЕМ
+=========================================================================
+
+Файл files/09_admin_tasks/07_reboot.yml:
+
+  ---
+  # 07_reboot.yml — практика 9, шаг 9: перезагрузка с ожиданием возврата.
+  # Перезагружаем по одной машине:
+  #   ansible-playbook 07_reboot.yml --limit web1 -e reboot_allowed=true
+  # Общий для всего парка serial появится в практике 14.
+
+  - name: Перезагрузка узла с ожиданием возврата
+    hosts: linux
+    become: true
+
+    vars:
+      # Перезагрузка — это действие, а не состояние. По умолчанию
+      # она выключена: плейбук, который сам перезагружает машины,
+      # запускают осознанно.
+      reboot_allowed: false
+
+    tasks:
+      - name: Перезагрузить узел и дождаться возврата
+        ansible.builtin.reboot:
+          msg: "Перезагрузка по практика 9 (Ansible)"
+          reboot_timeout: 600
+          test_command: /usr/bin/whoami
+        when: reboot_allowed | bool
+
+      - name: Убедиться, что узел снова отвечает на команды
+        ansible.builtin.wait_for_connection:
+          delay: 5
+          timeout: 300
+
+КОГДА ЭТО НУЖНО. Перезагрузка узла требуется там, где обновилось
+ядро или загружаемые модули: новая версия файла на диске есть,
+а работающее ядро — старое. Пока машина не перезагружена, обновление
+не применено, хотя пакеты стоят.
+
+ПОЧЕМУ ИМЕННО ТАК:
+  * reboot_timeout: 600 — сколько секунд ждать возврата. По умолчанию
+    600, и мы пишем его явно: на медленной виртуалке десяти минут
+    может не хватить, и лучше это увидеть в файле, чем вспоминать;
+  * test_command: /usr/bin/whoami — команда, которой модуль проверяет,
+    что узел поднялся и готов принимать задачи. Ждать «просто ответа
+    по SSH» недостаточно: sshd поднимается раньше, чем система
+    готова работать;
+  * when: reboot_allowed | bool — перезагрузка выполняется только
+    тогда, когда её разрешили. Плейбук, который перезагружает машины
+    без спроса, — это то, чего в рабочей среде не прощают. Флаг
+    передаётся снаружи через -e, то есть решение принимает человек,
+    а не файл.
+
+ЗАЧЕМ ЗДЕСЬ wait_for_connection, ЕСЛИ reboot ЖДЁТ САМ. Модуль
+ansible.builtin.reboot действительно дожидается возврата узла. Но
+перезагрузить машину можно и другими способами: командой reboot
+с async, через API гипервизора, через отключение питания. Тогда
+ожидание берут на себя отдельной задачей — она и показана, чтобы
+приём был в руках.
+
+ЧЕГО НЕ ДЕЛАТЬ: не перезагружайте весь парк одной задачей. Три
+машины уйдут в перезагрузку одновременно, и все сервисы, которые
+на них были, окажутся недоступны разом — включая тот, через который
+вы работаете. Пока в руках есть --limit, перезагружайте по машине:
+
+  ansible-playbook 07_reboot.yml --limit web1 -e reboot_allowed=true
+  ansible-playbook 07_reboot.yml --limit web2 -e reboot_allowed=true
+  ansible-playbook 07_reboot.yml --limit db1  -e reboot_allowed=true
+
+ВАЖНО: в практике 14 появится serial — тогда то же самое будет
+описываться не тремя командами, а одной строкой в play. Здесь serial
+ещё не разобран, поэтому пользуемся --limit.
+
+ПРОВЕРКА: до перезагрузки посмотрите работающее ядро и время
+работы, после — сравните:
+
+  ansible web1 -m ansible.builtin.command -a "uptime -p; uname -r"
+  up 3 days, 4 hours
+  6.14.0-30-generic
+
+После перезагрузки up будет «up 0 minutes», а версия ядра — той,
+что установлена последним обновлением. На Rocky Linux признак
+«нужна перезагрузка» смотрят иначе: файла /var/run/reboot-required
+там нет, зато видно, какое ядро установлено и какое работает:
+
+  ansible db1 -b -m ansible.builtin.shell -a "rpm -q kernel --last | head -3; uname -r"
+
+
+#########################################################################
+ЧАСТЬ 2. ЧТО ОТЛИЧАЕТ РАБОТУ ОТ УЧЕБНОГО ПРИМЕРА
+#########################################################################
+
+
+=========================================================================
+ШАГ 10. ИТОГОВЫЙ ПЛЕЙБУК ADMIN_TASKS.YML
+=========================================================================
+
+Все задачи, которые мы разобрали, собраны в один файл
+files/09_admin_tasks/admin_tasks.yml. Он начинается так:
+
+  ---
+  # admin_tasks.yml — практика 9: административные задачи на парке Linux.
+  # Итоговый плейбук практики: пользователи, sudo, пакеты, репозитории,
+  # службы, межсетевой экран, время, cron и параметры ядра.
+  #
+  # Запуск из каталога ~/ansible-lab:
+  #   ansible-playbook admin_tasks.yml
+  #
+  # Перезагрузки здесь нет намеренно: это действие, а не состояние.
+  # Она разобрана в файле 07_reboot.yml.
+
+  - name: Административные задачи на парке Linux
+    hosts: linux
+    become: true
+
+    vars:
+      engineer_public_key: /home/engineer/.ssh/id_ed25519.pub
+      deploy_user: deploy
+      deploy_group: deploy
+      deploy_password: "{{ 'Console47' | password_hash('sha512', 'ansible9salt') }}"
+      sudo_user: engineer
+
+    pre_tasks:
+      - name: Прочитать переменные для семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+    tasks:
+      # --- пользователи и группы -------------------------------------------
+      ...
+
+Первое отличие от шагов: имена deploy_user, deploy_group, sudo_user
+вынесены в переменные. В отдельных файлах они были прямо в задачах —
+так короче, когда файл живёт один шаг. В итоговом плейбуке те же
+имена встречаются в четырёх задачах, и менять их в четырёх местах
+не нужно.
+
+Дальше идут задачи шагов 3–8 дословно: пользователи, правило sudo,
+пакеты и репозитории, службы и таймер, межсетевой экран, время,
+cron и параметр ядра. Новых задач три.
+
+Установка пакетов передаёт список целиком:
+
+      - name: Установить административные пакеты (Debian)
+        ansible.builtin.apt:
+          name: "{{ admin_packages }}"
+          state: present
+        when: ansible_os_family == "Debian"
+
+      - name: Установить административные пакеты (RedHat)
+        ansible.builtin.dnf:
+          name: "{{ admin_packages }}"
+          state: present
+        when: ansible_os_family == "RedHat"
+
+ПОЧЕМУ ИМЕННО ТАК: пять пакетов ставятся одной транзакцией, а не
+пятью запусками пакетного менеджера. На пяти машинах разница
+невелика, на трёхстах — заметна. Loop остаётся для случаев, когда
+у элементов разные параметры.
+
+Служба планировщика описана переносимым модулем:
+
+      - name: Служба планировщика задач запущена и включена
+        ansible.builtin.service:
+          name: "{{ cron_service }}"
+          state: started
+          enabled: true
+
+Здесь нам нужно ровно «запущена и включена», а имя службы уже
+в переменной. Переносимый модуль подходит: он сам выберет systemd.
+
+И обработчик, который обновляет кэш apt, если изменился файл
+репозитория:
+
+    handlers:
+      - name: Обновить кэш apt
+        ansible.builtin.apt:
+          update_cache: true
+        when: ansible_os_family == "Debian"
+
+ПОЧЕМУ ЗДЕСЬ НУЖЕН ОБРАБОТЧИК: модуль deb822_repository в доку-
+ментации прямо предупреждает, что не обновляет кэш сам. Без
+обработчика новый репозиторий появится в списке, но пакетный
+менеджер узнает о нём только при следующем обновлении кэша — может
+быть, через час, а может быть, никогда.
+
+Запускаем итоговый плейбук:
+
+  ansible-playbook admin_tasks.yml
+
+  PLAY RECAP
+  db1  : ok=14  changed=5  unreachable=0  failed=0  skipped=5
+  web1 : ok=15  changed=7  unreachable=0  failed=0  skipped=2
+  web2 : ok=15  changed=7  unreachable=0  failed=0  skipped=2
+
+Числа changed у вас будут другими: часть работы уже сделана файлами
+шагов. Важно другое — сколько задач пропущено (skipped) и почему
+числа у машин разного семейства не совпадают.
+
+В плейбуке 23 задачи и один обработчик. На Ubuntu-машине пропускаются
+задачи только для RedHat, на Rocky — задачи только для Debian.
+На web1 и web2 это три задачи с apt и блок ufw: сам блок и задача
+внутри него — две отдельные строки в отчёте, поэтому skipped=2.
+На db1 это задача установки пакетов через dnf и блок с firewalld:
+две строки, а ещё три задачи с apt стоят на уровне задач, и каждая
+из них считается пропущенной отдельно, отсюда skipped=5.
+
+ok складывается из выполненного. У web-машин отработали 14 задач
+(23 минус 9 задач, помеченных when по RedHat), плюс сработавший
+обработчик — всего 15. У db1 отработали 13 задач, а обработчик
+обновления кэша apt пропущен: у него стоит тот же when по семейству
+ОС, — всего 14. Задача с changed входит и в ok, и в changed: changed
+не отдельная строка отчёта, а часть ok.
+
+
+=========================================================================
+ШАГ 11. ПОВТОРНЫЙ ПРОГОН: ЧТО ЗНАЧИТ CHANGED=0
+=========================================================================
+
+Теперь запустите тот же плейбук второй раз, ничего не меняя:
+
+  ansible-playbook admin_tasks.yml
+
+  PLAY RECAP
+  db1  : ok=13  changed=0  unreachable=0  failed=0  skipped=5
+  web1 : ok=14  changed=0  unreachable=0  failed=0  skipped=2
+  web2 : ok=14  changed=0  unreachable=0  failed=0  skipped=2
+
+changed=0 означает, что описание совпало с состоянием машин: ничего
+приводить в порядок не пришлось. Это и есть главный результат
+практики: плейбук можно запускать в любой момент.
+
+Числа ok меньше, чем в первом прогоне, — на единицу у web-машин
+и у db1, а skipped те же. Разница как раз про обработчик: он попадает
+в ok наравне с задачами. При первом прогоне на Ubuntu сработал
+обработчик обновления кэша apt — изменился файл репозитория, — и
+добавил единицу в ok. На втором прогоне файл не менялся, обработчик
+не вызывался, и его строка из ok пропала. Skipped при этом не
+изменился: в него попадают только задачи и блоки, чей when оказался
+ложным.
+
+ЧТО МОЖЕТ ПОКАЗАТЬ CHANGED НА ПОВТОРНОМ ПРОГОНЕ — и это нормально:
+
+  * задача обновления кэша apt, если с прошлого обновления прошло
+    больше часа: кэш действительно обновляется, работа сделана;
+  * первый прогон после ручной правки: кто-то поправил файл sudoers
+    руками, и плейбук вернул его к своему виду;
+  * установка новой версии пакета — но только при state: latest,
+    а у нас state: present.
+
+ПРОВЕРКА: перед тем как радоваться changed=0, полезно посмотреть,
+что плейбук собирается сделать, и не делать этого:
+
+  ansible-playbook admin_tasks.yml --check --diff
+
+Режим --check показывает предполагаемые изменения, --diff — разницу
+в файлах. ВАЖНО: --check не гарантирует, что изменений не будет.
+Часть модулей в этом режиме работают приблизительно: они не могут
+предсказать результат команды и сообщают «изменится». Зато те
+задачи, где --check показывает дифф файла, почти всегда покажут
+изменение и при обычном прогоне.
+
+ЧЕГО НЕ ДЕЛАТЬ: не добивайтесь changed=0 любой ценой. Соблазн
+дописать changed_when: false к задаче, которая что-то меняет,
+велик: отчёт станет красивым, а описание перестанет быть правдой.
+Если задача каждый раз сообщает changed, у неё есть причина:
+случайная соль в пароле, отсутствующий state, команда shell вместо
+модуля. Причину ищут, а не прячут.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: changed=0 — способ проверить плейбук без
+приборов. Если описание состояния приводит к изменениям на машине,
+где ничего не менялось, значит, описание неточное: не указан режим,
+не выбран модуль или в шаблоне есть случайное значение.
+
+
+=========================================================================
+ШАГ 12. ОБНОВЛЕНИЯ, ПЕРЕЗАГРУЗКА ПАРКА И ДОСТУПЫ
+=========================================================================
+
+Три решения, которые в учебном примере выглядели бы одной строкой,
+а в работе требуют отдельного разговора.
+
+РЕШЕНИЕ ПЕРВОЕ: ОБНОВЛЯТЬ ЛИ ВЕРСИИ. Соблазн написать так:
+
+      - name: Обновить веб-сервер до последней версии
+        ansible.builtin.apt:
+          name: "{{ web_package }}"
+          state: latest
+
+Строка рабочая. Но state: latest означает «поставь самую свежую
+версию, какая есть в репозитории»: каждый прогон может принести
+новое поведение и новые ошибки, а плейбук, который «только приводит
+конфигурацию», становится ещё и обновлятором.
+
+ПОЧЕМУ ИМЕННО ТАК: state: present описывает версию словами «любая,
+лишь бы стояла», state: latest — «самая свежая из доступных». Второе
+это не настройка, а решение об обновлении: его принимает тот, кто
+знает окно обслуживания и план отката. Поэтому обновление выносят
+в отдельный плейбук и запускают по одной машине.
+
+ЧЕГО НЕ ДЕЛАТЬ: не ставьте state: latest «чтобы не отставать» на все
+пакеты сразу (name: "*"). Такой прогон может обновить ядро, библиотеки
+и базу данных за один заход, а откатывать придётся из снимка.
+
+РЕШЕНИЕ ВТОРОЕ: ПЕРЕЗАГРУЗКА ПАРКА. Перезагрузка по одной машине
+медленная, и рано или поздно кто-то напишет один play на все машины.
+Так делать нельзя: одновременно перезагруженный парк — это
+одновременно недоступный сервис. В практике 14 появятся serial
+и max_fail_percentage: serial: 1 обновляет машины по одной,
+max_fail_percentage останавливает обновление при доле отказов.
+Здесь в руках только --limit.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: правило не зависит от инструмента: пока не
+обновлена и не проверена первая машина, вторая не трогается.
+
+РЕШЕНИЕ ТРЕТЬЕ: ПАРОЛИ И ДОСТУПЫ. В наших файлах стоит учебный
+пароль Console47, а соль хэша — прямо в плейбуке. В рабочем проекте
+так нельзя по двум причинам: пароль виден в репозитории, а смена
+пароля требует правки кода. Место секрета — Vault из практики 5:
+
+  deploy_password: "{{ vault_deploy_password }}"
+
+а сам хэш считают там же, где и остальные секреты. Второй момент:
+/etc/sudoers.d и членство в группе sudo — это не «настройка», а
+выдача прав. У неё должен быть владелец и срок: кто и зачем получил
+root, когда доступ будет отозван. Плейбук делает отзыв воспроизводимым:
+
+      - name: Отозвать доступ у уволенного инженера
+        ansible.builtin.user:
+          name: ivanov
+          state: absent
+          remove: true
+          force: true
+
+ВАЖНО: remove: true удалит домашний каталог, но не убьёт уже
+запущенные процессы от этого пользователя и не отзовёт ключи,
+которые он успел скопировать. force: true нужен, когда пользователь
+числится владельцем файлов вне своего каталога: без него задача
+откажется удалять учётную запись. Плейбук закрывает только часть
+работы по отзыву доступа.
+
+ЧЕГО НЕ ДЕЛАТЬ: не оставляйте NOPASSWD на весь sudo у служебных
+учётных записей: в рабочей среде его место занимает правило
+с ограниченным списком команд.
+
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+ПРОБЛЕМА: No package matching 'apache2' is available
+
+  fatal: [db1]: FAILED! => {"changed": false,
+  "failures": ["No package matching 'apache2' is available"],
+  "msg": "Failed to install some of the specified packages"}
+
+Причина: задача ставит apache2 на все машины парка, а на Rocky Linux
+этот пакет называется httpd. Модуль честно сообщает, что пакета
+в подключённых репозиториях нет.
+
+Порядок проверки:
+
+  1. Какое семейство ОС у машины:
+
+     ansible db1 -m ansible.builtin.setup -a "filter=ansible_os_family"
+
+  2. Что лежит в переменной на этой машине:
+
+     ansible db1 -m ansible.builtin.debug -a "var=web_package"
+
+  3. Есть ли пакет в репозиториях Rocky:
+
+     ansible db1 -b -m ansible.builtin.command -a "dnf info httpd"
+
+Лечится это не правкой задачи и не вторым when, а переменной по
+семейству: apache2 в vars/Debian.yml, httpd в vars/RedHat.yml.
+Если на db1 подставился apache2 — файл vars/RedHat.yml не прочитан.
+
+ПРОБЛЕМА: Missing sudo password
+
+  fatal: [web1]: FAILED! => {"msg": "Missing sudo password"}
+
+Причина: в play стоит become: true, а sudo на узле просит пароль.
+На нашем стенде пароль не запрашивается — значит, файл в /etc/sudoers.d
+изменился, потерял права или содержит опечатку.
+
+Порядок проверки:
+
+  1. Работает ли sudo без пароля на узле:
+
+     ansible web1 -m ansible.builtin.command -a "sudo -n true"
+
+  2. Файл и его права:
+
+     ansible web1 -b -m ansible.builtin.command -a "ls -l /etc/sudoers.d/"
+     -r--r----- 1 root root 174 ... /etc/sudoers.d/engineer-nopass
+
+  3. Вывод проверки синтаксиса:
+
+     ansible web1 -b -m ansible.builtin.command -a "/usr/sbin/visudo -cf /etc/sudoers.d/engineer-nopass"
+
+Три частые причины: права не 0440 (sudo такой файл игнорирует),
+опечатка в имени пользователя, файл создан руками без завершающего
+перевода строки. Если sudo уже потерян, войти с повышением прав
+не получится: нужен вход через консоль гипервизора или снимок ВМ.
+
+ПРОБЛЕМА: FirewallD is not running
+
+  fatal: [db1]: FAILED! => {"changed": false,
+  "msg": "FirewallD is not running"}
+
+Причина: демон firewalld не запущен. Пакет может быть установлен,
+а служба — выключена: так бывает на свежей машине, после снимка ВМ
+и после того, как кто-то остановил службу вручную.
+
+Порядок проверки:
+
+  1. Состояние службы:
+
+     ansible db1 -b -m ansible.builtin.command -a "systemctl is-active firewalld"
+
+  2. Ответ демона:
+
+     ansible db1 -b -m ansible.builtin.command -a "firewall-cmd --state"
+
+  3. Если ответ not running — включить и запустить:
+
+     ansible db1 -b -m ansible.builtin.service -a "name=firewalld state=started enabled=true"
+
+В плейбуке за это отвечает задача «Включить и запустить службу
+межсетевого экрана» из шага 7: она стоит до правил намеренно.
+
+ПРОБЛЕМА: Failed to set permissions on the temporary files Ansible needs to create
+
+  fatal: [web1]: FAILED! => {"msg": "Failed to set permissions on the
+  temporary files Ansible needs to create when becoming an
+  unprivileged user ..."}
+
+Причина: задача выполняется с become_user, который не root, и Ansible
+не смог поделиться временными файлами между пользователем подключения
+и этим пользователем. Чаще всего дело в файловой системе: у NFS
+или tmpfs без поддержки ACL это не получается.
+
+У нас такая ошибка появляется, если дописать к задачам
+become_user: deploy — например, чтобы работать от имени службы
+выкладки. Порядок проверки:
+
+  1. Есть ли вообще become_user в плейбуках:
+
+     grep -rn "become_user" ~/ansible-lab/*.yml
+
+  2. На какой файловой системе домашний каталог и /tmp:
+
+     ansible web1 -b -m ansible.builtin.command -a "df -T /home /tmp"
+
+  3. Куда Ansible складывает временные файлы:
+
+     ansible web1 -m ansible.builtin.debug -a "var=ansible_remote_tmp"
+
+Лечение: не использовать become_user там, где задача этого не требует,
+а если требует — задать каталог на локальной файловой системе
+параметром remote_tmp в ansible.cfg.
+
+ПРОБЛЕМА: useradd: user 'intern' already exists
+
+  fatal: [web1]: FAILED! => {"changed": true, "cmd": "useradd intern",
+  "rc": 9, "stderr": "useradd: user 'intern' already exists"}
+
+Причина: задачу удаления или создания пользователя заменили командой
+ansible.builtin.command. Модуль command ничего не знает о состоянии:
+он выполняет команду и падает, если она вернула ненулевой код. На
+втором прогоне пользователь уже создан — и задача падает.
+
+Порядок проверки:
+
+  1. Найдите, где вместо модуля стоит команда:
+
+     grep -rn "useradd\|userdel" ~/ansible-lab/*.yml
+
+  2. Посмотрите, что задача выполняется каждый прогон (changed=true
+     в отчёте) — верный признак команды.
+
+Лечение: вернуть ansible.builtin.user с state: present или absent.
+Если команду всё-таки нужно оставить, у неё должны быть признак
+создания (creates: /home/intern) или условия failed_when и
+changed_when — иначе она не станет идемпотентной.
+
+ПРОБЛЕМА: Не находит таймер: Could not find the requested service
+
+  fatal: [web1]: FAILED! => {"changed": false,
+  "msg": "Could not find the requested service timezone-check.timer: host"}
+
+Причина: файл юнита лежит в /etc/systemd/system, но systemd его
+ещё не прочитал. Список юнитов обновляется при загрузке и по команде
+daemon-reload — её и выполняет параметр daemon_reload: true.
+
+Порядок проверки:
+
+  1. Файл на месте:
+
+     ansible web1 -b -m ansible.builtin.command -a "ls -l /etc/systemd/system/timezone-check.timer"
+
+  2. Видит ли юнит systemd:
+
+     ansible web1 -b -m ansible.builtin.command -a "systemctl list-unit-files 'timezone-check*'"
+
+  3. Перечитать юниты вручную и запустить:
+
+     ansible web1 -b -m ansible.builtin.systemd_service -a "daemon_reload=true"
+
+Лечение: daemon_reload: true в задаче, которая работает с новым
+юнитом. Обратите внимание: обработчик тут не спасает, он выполнится
+в конце play, то есть после этой задачи.
+
+ПРОБЛЕМА: UNREACHABLE! ... Failed to connect to the host via ssh
+
+  web1 | UNREACHABLE! => {"changed": false, "unreachable": true,
+  "msg": "Failed to connect to the host via ssh: ssh: connect to host
+  10.0.2.11 port 22: Connection timed out"}
+
+Причина: скорее всего, на предыдущем прогоне ufw включился
+с политикой deny для входящих, а правила для 22/tcp не было.
+Ловушка в том, что текущее соединение Ansible остаётся живым
+(его отслеживает conntrack ядра), поэтому ошибка появляется не
+сразу, а на следующем прогоне.
+
+Порядок проверки:
+
+  1. Машина пингуется, а порт закрыт:
+
+     ping -c2 10.0.2.11
+     nc -z -w2 10.0.2.11 22
+
+  2. Через консоль гипервизора посмотрите правила и верните доступ:
+
+     sudo ufw status verbose
+     sudo ufw allow 22/tcp
+
+Лечение на будущее: правило для SSH добавляется до state: enabled —
+именно так задачи и стоят в файле 06_firewall.yml.
+
+ЧЕГО НЕ ДЕЛАТЬ: не передавайте пароль в модуль ansible.builtin.user
+открытым текстом — password: "Console47". Модуль положит это значение
+в /etc/shadow как есть, а вход по паролю не заработает: там должен
+лежать хэш. Используйте
+     password: "{{ 'Console47' | password_hash('sha512', 'ansible9salt') }}".
+Соль указана явно, иначе хэш менялся бы на каждом прогоне
+и повторный прогон никогда не дал бы changed=0. Учебное значение при
+этом помечено как учебное: в рабочем проекте пароль берут из Vault
+или из переменной, а не из текста плейбука.
+
+ВАЖНО: не открывайте порты командами вида ufw allow 80/tcp, даже
+через модуль command или shell. Команда не знает состояния: она
+выполняется каждый прогон и каждый раз отчитывается changed, а если
+ufw выключен, правило просто не применится, и никто об этом
+не узнает. В прежней версии курса порты открывали руками командами
+ufw — на занятии это работало, но в плейбуке так делать нельзя.
+Порты описывают модулем community.general.ufw: он смотрит текущие
+правила и приводит их к нужному виду.
+
+ЧЕГО НЕ ДЕЛАТЬ: не перезапускайте службу задачей со
+state: restarted «чтобы наверняка». Каждый прогон перезапускает
+её заново и показывает changed, то есть плейбук никогда не приходит
+к changed=0, а сервис получает секунды недоступности на ровном месте.
+Состояние описывают через state: started, а перезапуск оставляют
+изменению конфигурации: задача с файлом уведомляет обработчик
+через notify, и тот срабатывает только тогда, когда файл изменился.
+
+
+=========================================================================
+ПРОВЕРКА РЕЗУЛЬТАТА
+=========================================================================
+
+Практика выполнена, если выполняются все пункты.
+
+1. Синтаксис всех файлов практики в порядке:
+
+     ansible-playbook --syntax-check admin_tasks.yml
+     ansible-playbook --syntax-check 02_users.yml    (и остальные)
+
+   При успехе команда молчит.
+
+2. Повторный прогон итогового плейбука не меняет ничего:
+
+     ansible-playbook admin_tasks.yml
+     web1 : ok=14  changed=0  ...
+     web2 : ok=14  changed=0  ...
+     db1  : ok=13  changed=0  ...
+
+3. Пользователь выкладки есть, лишней учётной записи нет:
+
+     ansible all -b -m ansible.builtin.command -a "id deploy"
+     ansible all -b -m ansible.builtin.command -a "ls -d /home/intern"
+
+   Первая показывает группы sudo (Ubuntu) или wheel (Rocky), вторая
+   завершается ошибкой «No such file or directory» — так и нужно.
+
+4. Файл sudoers проверен, пакеты и репозитории на месте:
+
+     ansible all -b -m ansible.builtin.command -a "/usr/sbin/visudo -cf /etc/sudoers.d/engineer-nopass"
+     ansible web1 -b -m ansible.builtin.command -a "ls /etc/apt/sources.list.d/"
+     ansible db1  -b -m ansible.builtin.command -a "dnf repolist epel"
+
+   visudo отвечает «parsed OK», на web1 виден файл ubuntu-sources.sources.
+
+5. Служба, таймер и межсетевой экран работают:
+
+     ansible all -b -m ansible.builtin.command -a "systemctl is-active timezone-check.timer"
+     ansible web1 -b -m ansible.builtin.command -a "ufw status verbose"
+     ansible db1  -b -m ansible.builtin.command -a "firewall-cmd --zone=public --list-services"
+
+   Ответ active; на web1 в правилах 22/tcp и 80/tcp, на db1 — http и ssh.
+
+6. Время, расписание и параметр ядра совпадают на трёх машинах:
+
+     ansible all -b -m ansible.builtin.command -a "timedatectl show --property=Timezone"
+     ansible all -b -m ansible.builtin.command -a "crontab -l -u root"
+     ansible all -b -m ansible.builtin.command -a "sysctl -n net.ipv4.conf.all.accept_redirects"
+
+   Три одинаковых ответа Timezone=Europe/Moscow, строка расписания
+   с маркером #Ansible и значение 0.
+
+УБИРАТЬ ПОСЛЕ ПРАКТИКИ НЕЧЕГО: описанное состояние — не мусор,
+а результат, который в практике 10 превратится в роль web_admin.
+Стоит проверить одно: флаг перезагрузки передаётся ключом -e
+и в файлах не сохраняется.
+
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Далее в курсе:
+
+  * практика 10 — роли: задачи из admin_tasks.yml переезжают в роль
+    web_admin, а переменные по семействам — в vars/main.yml роли;
+  * практика 11 — регулярные выражения и точечная правка: строка
+    cron и параметр ядра правятся не шаблоном, а lineinfile;
+  * практика 12 — Jinja2 для настоящих конфигов: наш шаблон
+    engineer-nopass.j2 станет одним из многих;
+  * практика 14 — сложные проекты: serial вместо --limit при
+    перезагрузке парка, include_tasks вместо копирования задач;
+  * практика 16 — качество автоматизации: ansible-lint проверит
+    в том числе и то, что записано в этой практике.
+
+ПЕРЕД ПЕРЕХОДОМ уберите за собой:
+  * снимок ВМ делать не нужно: состояние машин — часть работы;
+  * если вы включали перезагрузку, проверьте, что правая часть
+    отчёта снова changed=0 (перезагрузка сбрасывает uptime,
+    но не описание состояния).

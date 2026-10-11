@@ -1,0 +1,35 @@
+---
+# Параметры sshd_config. Словарь: имя параметра — значение.
+# Шаблон печатает его циклом по sshd_params.items(), поэтому порядок
+# строк в файле совпадает с порядком ключей здесь. YAML порядок ключей
+# сохраняет, и это важно: sshd_config читается сверху вниз, а при
+# повторе одного параметра побеждает первый.
+sshd_params:
+  Port: 22
+  AddressFamily: "any"
+  PermitRootLogin: "no"
+  PubkeyAuthentication: "yes"
+  PasswordAuthentication: "no"
+  KbdInteractiveAuthentication: "no"
+  PermitEmptyPasswords: "no"
+  MaxAuthTries: 4
+  MaxSessions: 4
+  LoginGraceTime: "30"
+  ClientAliveInterval: 300
+  ClientAliveCountMax: 2
+  X11Forwarding: "no"
+  AllowAgentForwarding: "no"
+  UsePAM: "yes"
+  PrintMotd: "no"
+  LogLevel: "INFO"
+
+# Путь к файлу один и тот же, а вот имя службы и путь
+# к подсистеме sftp различаются семейством ОС.
+# Здесь Jinja2 работает не в шаблоне, а в переменной.
+sshd_config_path: "/etc/ssh/sshd_config"
+sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_os_family == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
+
+# Если переменная определена, шаблон добавит строку AllowUsers.
+sshd_allow_users:
+  - engineer

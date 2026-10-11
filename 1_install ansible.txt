@@ -1,5 +1,0 @@
-Установка на Ubuntu:
-sudo apt-get install ansible
-
-Установка на CentOS:
-sudo yum install ansible

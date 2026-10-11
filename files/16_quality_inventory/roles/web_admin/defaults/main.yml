@@ -1,0 +1,25 @@
+---
+# defaults/main.yml — значения по умолчанию роли web_admin.
+# Приоритет у них самый низкий: play, group_vars, host_vars
+# и --extra-vars их перекрывают.
+
+# Разворачивать ли страницу сайта: для группы web значение
+# переопределено в group_vars/web.yml.
+web_admin_deploy_site: false
+
+# Что написано на странице.
+web_admin_site_title: "Учебный стенд курса Ansible"
+web_admin_owner: "не назначен"
+
+# Порт сайта и порт SSH: их открывает межсетевой экран.
+web_admin_port: 80
+web_admin_ssh_port: 22
+
+# Каталог сайта и имена файлов в нём.
+web_admin_site_root: /var/www/html
+web_admin_index_file: index.html
+web_admin_style_file: style.css
+
+# Состояние службы: started — «запущена», enabled — «в автозапуске».
+web_admin_service_state: started
+web_admin_service_enabled: true

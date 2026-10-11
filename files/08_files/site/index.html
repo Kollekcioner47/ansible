@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Стенд курса Ansible</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main>
+      <h1>Стенд практики 8</h1>
+      <p>
+        Эта страница разложена на web1 и web2 модулями
+        <code>ansible.builtin.file</code> и <code>ansible.builtin.copy</code>
+        из плейбука <code>01_copy.yml</code>.
+      </p>
+      <p>
+        Файлы принадлежат root:root, права на файлы — 0644,
+        на каталог — 2755 с битом setgid.
+      </p>
+      <ul>
+        <li>control — 10.0.2.5, управляющая машина</li>
+        <li>web1 — 10.0.2.11, Ubuntu 26.04 LTS</li>
+        <li>web2 — 10.0.2.12, Ubuntu 26.04 LTS</li>
+        <li>db1 — 10.0.2.13, Rocky Linux 10</li>
+      </ul>
+      <p class="note">
+        Картинок и других бинарных файлов в курсе нет: репозиторий
+        содержит только текст.
+      </p>
+    </main>
+  </body>
+</html>

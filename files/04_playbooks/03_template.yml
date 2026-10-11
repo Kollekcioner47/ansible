@@ -1,0 +1,20 @@
+# 03_template.yml — шаг 6 практики 4: своя страница вместо
+# страницы по умолчанию. Пакет и служба пока не описаны.
+
+- name: Разложить содержимое сайта
+  hosts: web:db
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Обновить кэш пакетов
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Положить главную страницу сайта
+      ansible.builtin.copy:
+        src: index.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: "0644"

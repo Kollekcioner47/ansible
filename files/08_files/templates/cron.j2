@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# Задание создано плейбуком практики 8.
+# Файл разворачивается на узел как /etc/cron.d/site-check
+# задачей ansible.builtin.template из 01_copy.yml.
+# Переменные cron_minute, cron_hour и cron_mailto заданы
+# в плейбуке; inventory_hostname подставляет имя текущего узла.
+#
+# Права на файл в /etc/cron.d обязательны 0644 и владелец root:
+# иначе cron отказывается читать файл и пишет об этом в журнал.
+#
+# Задание записано ОДНОЙ строкой: cron не понимает продолжения
+# строки обратным слэшем. Если перенести команду, первая строка
+# оборвётся на слэше, а вторая станет неверной записью.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO="{{ cron_mailto }}"
+
+{{ cron_minute }} {{ cron_hour }} * * * root /usr/bin/logger "{{ inventory_hostname }}: плановая проверка сайта"

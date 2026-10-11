@@ -1,0 +1,57 @@
+---
+# 06_firewall.yml — практика 9, шаг 7: одно намерение двумя модулями.
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 06_firewall.yml
+
+- name: "Межсетевой экран: веб-сервер доступен снаружи"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: Прочитать переменные для семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: Поставить пакет межсетевого экрана
+      ansible.builtin.package:
+        name: "{{ firewall_package }}"
+        state: present
+
+    - name: Включить и запустить службу межсетевого экрана
+      ansible.builtin.service:
+        name: "{{ firewall_service }}"
+        state: started
+        enabled: true
+
+    - name: Открыть порты на Ubuntu (ufw)
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Разрешить 22/tcp, иначе следующий прогон не подключится
+          community.general.ufw:
+            rule: allow
+            port: "22"
+            proto: tcp
+
+        - name: Разрешить порт веб-сервера
+          community.general.ufw:
+            rule: allow
+            port: "{{ web_port }}"
+            proto: tcp
+
+        - name: Включить ufw с политикой deny для входящих
+          community.general.ufw:
+            state: enabled
+            policy: deny
+            direction: incoming
+
+    - name: Открыть службу http на Rocky (firewalld)
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Разрешить службу http в зоне public
+          ansible.posix.firewalld:
+            service: "{{ firewalld_service }}"
+            zone: public
+            permanent: true
+            immediate: true
+            state: enabled

@@ -1,0 +1,43 @@
+---
+# Практика 12, шаги 6–7: sshd_config на web1 (Ubuntu) и db1 (Rocky).
+# Запуск: ansible-playbook 02_sshd.yml --diff
+# Перед запуском откройте второй сеанс SSH к узлам: шаблон
+# заменяет файл целиком.
+
+- name: "Настроить sshd из шаблона со словарём параметров"
+  hosts: linux
+  become: true
+  vars_files:
+    - vars/sshd.yml
+  handlers:
+    - name: "Перезапустить sshd"
+      ansible.builtin.systemd_service:
+        name: "{{ sshd_service }}"
+        state: restarted
+  tasks:
+    - name: "Собрать sshd_config из шаблона sshd_config.j2"
+      ansible.builtin.template:
+        src: sshd_config.j2
+        dest: "{{ sshd_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        backup: true
+        validate: "sshd -t -f %s"
+      notify: Перезапустить sshd
+
+    - name: "Прочитать действующие параметры sshd"
+      ansible.builtin.command:
+        cmd: sshd -T
+      register: sshd_effective
+      changed_when: false
+
+    - name: "Проверить, что вход по паролю и для root запрещены"
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication no' in (sshd_effective.stdout | lower)"
+          - "'permitrootlogin no' in (sshd_effective.stdout | lower)"
+        fail_msg: "Настройки sshd не применились: смотрите sshd_effective.stdout"
+        success_msg: "sshd принял параметры: PasswordAuthentication no, PermitRootLogin no"

@@ -1,0 +1,44 @@
+---
+# 02_system_role_timesync.yml — системная роль RHEL на db1.
+#
+# Роль timesync ставит и настраивает клиент синхронизации времени
+# (chrony). Она пришла не с Galaxy: её поддерживает вендор, она
+# лежит в пакете rhel-system-roles и попадает в /usr/share/ansible/
+# roles — этот каталог перечислен в roles_path в ansible.cfg.
+#
+# Запуск из каталога проекта:
+#
+#   cd ~/ansible-lab/15_galaxy
+#   ansible-playbook 02_system_role_timesync.yml
+
+- name: Синхронизация времени системной ролью timesync
+  hosts: redhat
+  become: true
+  gather_facts: true
+
+  vars:
+    # Документированные переменные роли timesync.
+    #
+    # ВАЖНО: роль ЗАМЕНЯЕТ конфигурацию chrony целиком, а не
+    # дополняет её. Серверы, перечисленные здесь, становятся
+    # единственными источниками времени на машине.
+    timesync_ntp_servers:
+      - hostname: 0.ru.pool.ntp.org
+        iburst: true
+        pool: true
+    timesync_min_sources: 1
+
+  roles:
+    - role: rhel-system-roles.timesync
+
+  tasks:
+    # Роль выполняется до задач play, поэтому chrony уже настроен.
+    - name: Показать, с какими источниками работает chrony
+      ansible.builtin.command:
+        cmd: chronyc sources
+      register: chrony_sources
+      changed_when: false
+
+    - name: Напечатать список источников времени
+      ansible.builtin.debug:
+        var: chrony_sources.stdout_lines

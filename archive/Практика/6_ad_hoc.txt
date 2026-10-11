@@ -1,0 +1,43 @@
+Посмотрим информацию о клиенте, используя модуль setup
+ansible ansible_client1 -m setup
+
+Выполним shell команду на клиенте
+ansible ansible_client1 -m shell "команда"
+для windwos модуль называется win_shell
+
+скопируем файл с мастера на клиент
+сначала его создадим
+echo "Privet!" > privet.txt
+отправим файлик на клиента
+ansible ansible_clinet1 -m copy -a "src=privet.txt dest=/home mode=777"
+она не сработает поскольку в хоум нельзя писать без sudo, усилим нашу команду 
+ansible ansible_clinet1 -m copy -a "src=privet.txt dest=/home mode=777" -b
+и наш файлик уйдёт на клиента, проверим это
+ansible ansible_clinet1 -m shell "ls -la /home/privet.txt"
+а теперь удалим файл
+ansible ansible_clinet1 -m file -a "path=/home/privet.txt state=absent" -b
+
+скачать файл из интернета
+ansible ansible_clinet1 -m get_url -a "url=https://collectors.sumologic.com/rest/download/linux/64 dest=/home" -b
+
+установка ПО
+ansible ansible_clinet1 -m apt -a "name=mc" -b
+удаление ПО
+ansible ansible_clinet1 -m apt -a "name=mc state=absent" -b
+
+Установим apache
+ansible ansible_clinet1 -m apt -a "name=apache2" -b
+Запустим сервис
+ansible ansible_clinet1 -m service -a "name=apache2 state=started enabled=yes" -b
+Запросим страничку
+curl ip клиента
+
+посмотреть список модулей
+ansible-doc -l
+
+на хосте куда не может попасть ансибл вводим поэтапно:
+1. sudo -i
+2. cd /etc/sudoers.d/
+3. vim "имя юзера"-nopass и там сохраняем строку "имя юзера" ALL=(ALL) NOPASSWD: ALL
+4. chmod 440 "имя юзера"-nopass
+И всё заработает.

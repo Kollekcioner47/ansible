@@ -1,0 +1,98 @@
+# meta/argument_specs.yml — описание аргументов роли web_admin.
+#
+# Файл читает сам Ansible. Перед первой задачей роли он подставляет
+# задачу проверки аргументов (validate_argument_spec) и сверяет
+# значения с этим описанием: значение не того типа или неизвестный
+# аргумент роли останавливают прогон с понятным текстом, а не
+# приводят к ошибке где-то в середине роли.
+#
+# Значения по умолчанию здесь ПОВТОРЯЮТ defaults/main.yml. Само
+# значение Ansible берёт из defaults/; в описании оно нужно, чтобы
+# документация роли (ansible-doc -t role web_admin) была полной.
+# Разойтись эти два файла не должны.
+#
+# Переменные из vars/main.yml (web_admin_supported_families и
+# web_admin_family_settings) здесь НЕ описаны намеренно: их
+# переопределить нельзя, значит аргументами роли они не являются.
+---
+argument_specs:
+  main:
+    short_description: Веб-сервер и учебная страница сайта на Ubuntu и Rocky Linux
+    description:
+      - Ставит и включает веб-сервер (apache2 на Debian, httpd на RedHat),
+        раскладывает страницу сайта из шаблона index.j2 и оформление
+        style.css, открывает порт в межсетевом экране (ufw или firewalld).
+      - Ветка выбирается по факту ansible_os_family, а не по имени машины.
+        Нужны коллекции ansible.posix и community.general и права root.
+    author:
+      - engineer
+    options:
+      web_admin_deploy_site:
+        type: bool
+        required: false
+        default: false
+        description:
+          - Разворачивать ли страницу сайта. Для группы web значение
+            переопределено в group_vars/web.yml, на db1 страницы нет.
+      web_admin_site_title:
+        type: str
+        required: false
+        default: "Учебный стенд курса Ansible"
+        description:
+          - Заголовок страницы сайта. Подставляется в шаблон index.j2.
+      web_admin_owner:
+        type: str
+        required: false
+        default: "не назначен"
+        description:
+          - Владелец машины — строка, которую видно на странице сайта.
+            В проекте практики 10 значение приходит из group_vars/web.yml.
+      web_admin_port:
+        type: int
+        required: false
+        default: 80
+        description:
+          - Порт сайта. Его открывает межсетевой экран и проверяет
+            обработчик роли.
+      web_admin_ssh_port:
+        type: int
+        required: false
+        default: 22
+        description:
+          - Порт SSH. Открывается вместе с портом сайта, чтобы включение
+            ufw с политикой deny не отрезало доступ к машине.
+      web_admin_site_root:
+        type: path
+        required: false
+        default: /var/www/html
+        description:
+          - Каталог сайта. Роль создаёт его, если каталога нет.
+      web_admin_index_file:
+        type: str
+        required: false
+        default: index.html
+        description:
+          - Имя главной страницы в каталоге сайта.
+      web_admin_style_file:
+        type: str
+        required: false
+        default: style.css
+        description:
+          - Имя файла оформления в каталоге сайта.
+      web_admin_service_state:
+        type: str
+        required: false
+        default: started
+        choices:
+          - started
+          - restarted
+          - stopped
+        description:
+          - Состояние службы веб-сервера. Значение restarted применять
+            не рекомендуется — обработчик роли перезапускает службу сам.
+      web_admin_service_enabled:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Включать ли службу веб-сервера в автозапуск.

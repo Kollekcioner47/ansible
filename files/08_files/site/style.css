@@ -1,0 +1,49 @@
+/* style.css — таблица стилей учебного сайта практики 8.
+   Файл кладётся на узел той же задачей copy, что и index.html:
+   права 0644, владелец root:root. */
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "DejaVu Sans", Verdana, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #202020;
+  background: #f4f4f4;
+}
+
+main {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 1.5rem 2rem;
+  background: #ffffff;
+  border: 1px solid #d0d0d0;
+}
+
+h1 {
+  margin-top: 0;
+  font-size: 1.6rem;
+}
+
+code {
+  padding: 0 0.2rem;
+  font-family: "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 0.9rem;
+  background: #eeeeee;
+}
+
+ul {
+  padding-left: 1.2rem;
+}
+
+li {
+  margin-bottom: 0.25rem;
+}
+
+.note {
+  margin-top: 1.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #d0d0d0;
+  font-size: 0.9rem;
+  color: #505050;
+}

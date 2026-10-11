@@ -1,0 +1,226 @@
+---
+# admin_tasks.yml — практика 9: административные задачи на парке Linux.
+# Итоговый плейбук практики: пользователи, sudo, пакеты, репозитории,
+# службы, межсетевой экран, время, cron и параметры ядра.
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook admin_tasks.yml
+#
+# Перезагрузки здесь нет намеренно: это действие, а не состояние.
+# Она разобрана в файле 07_reboot.yml.
+
+- name: Административные задачи на парке Linux
+  hosts: linux
+  become: true
+
+  vars:
+    engineer_public_key: /home/engineer/.ssh/id_ed25519.pub
+    deploy_user: deploy
+    deploy_group: deploy
+    deploy_password: "{{ 'Console47' | password_hash('sha512', 'ansible9salt') }}"
+    sudo_user: engineer
+
+  pre_tasks:
+    - name: Прочитать переменные для семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    # --- пользователи и группы -------------------------------------------
+    - name: Создать группу для службы выкладки
+      ansible.builtin.group:
+        name: "{{ deploy_group }}"
+        state: present
+
+    - name: Создать пользователя deploy
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        comment: "Учебная учётная запись для выкладки"
+        group: "{{ deploy_group }}"
+        groups: "{{ sudo_group }}"
+        append: true
+        shell: /bin/bash
+        create_home: true
+        password: "{{ deploy_password }}"
+        state: present
+
+    - name: Раздать пользователю deploy открытый ключ engineer
+      ansible.posix.authorized_key:
+        user: "{{ deploy_user }}"
+        key: "{{ lookup('file', engineer_public_key) }}"
+        exclusive: true
+        state: present
+
+    - name: Убрать учебного пользователя intern вместе с каталогом
+      ansible.builtin.user:
+        name: intern
+        state: absent
+        remove: true
+
+    # --- sudo -------------------------------------------------------------
+    - name: Правило sudo из шаблона
+      ansible.builtin.template:
+        src: templates/engineer-nopass.j2
+        dest: /etc/sudoers.d/engineer-nopass
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "/usr/sbin/visudo -cf %s"
+
+    # --- пакеты и репозитории ---------------------------------------------
+    - name: Обновить кэш пакетов, если он старше часа (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Убрать пакеты, ставшие ненужными (Debian)
+      ansible.builtin.apt:
+        autoremove: true
+      when: ansible_os_family == "Debian"
+
+    - name: Установить административные пакеты (Debian)
+      ansible.builtin.apt:
+        name: "{{ admin_packages }}"
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Установить административные пакеты (RedHat)
+      ansible.builtin.dnf:
+        name: "{{ admin_packages }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Подключить репозиторий с исходниками Ubuntu (Debian)
+      ansible.builtin.deb822_repository:
+        name: ubuntu-sources
+        types: deb-src
+        uris: http://archive.ubuntu.com/ubuntu
+        suites: "{{ ansible_distribution_release }}"
+        components:
+          - main
+          - universe
+        signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+        state: present
+      when: ansible_os_family == "Debian"
+      notify: Обновить кэш apt
+
+    - name: Подключить репозиторий EPEL (RedHat)
+      ansible.builtin.yum_repository:
+        name: epel
+        description: Extra Packages for Enterprise Linux $releasever - $basearch
+        baseurl: https://dl.fedoraproject.org/pub/epel/$releasever/Everything/$basearch/
+        gpgcheck: true
+        gpgkey: https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-$releasever
+        enabled: true
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    # --- службы ------------------------------------------------------------
+    - name: Веб-сервер запущен, включён в автозапуск и не заблокирован
+      ansible.builtin.systemd_service:
+        name: "{{ web_service }}"
+        state: started
+        enabled: true
+        masked: false
+
+    - name: Служба планировщика задач запущена и включена
+      ansible.builtin.service:
+        name: "{{ cron_service }}"
+        state: started
+        enabled: true
+
+    - name: Положить юнит проверки часового пояса
+      ansible.builtin.template:
+        src: templates/timezone-check.service.j2
+        dest: /etc/systemd/system/timezone-check.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Положить таймер проверки часового пояса
+      ansible.builtin.template:
+        src: templates/timezone-check.timer.j2
+        dest: /etc/systemd/system/timezone-check.timer
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Включить и запустить таймер
+      ansible.builtin.systemd_service:
+        name: timezone-check.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # --- межсетевой экран --------------------------------------------------
+    - name: Поставить пакет межсетевого экрана
+      ansible.builtin.package:
+        name: "{{ firewall_package }}"
+        state: present
+
+    - name: Включить и запустить службу межсетевого экрана
+      ansible.builtin.service:
+        name: "{{ firewall_service }}"
+        state: started
+        enabled: true
+
+    - name: Открыть порты на Ubuntu (ufw)
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Разрешить 22/tcp, иначе следующий прогон не подключится
+          community.general.ufw:
+            rule: allow
+            port: "22"
+            proto: tcp
+
+        - name: Разрешить порт веб-сервера
+          community.general.ufw:
+            rule: allow
+            port: "{{ web_port }}"
+            proto: tcp
+
+        - name: Включить ufw с политикой deny для входящих
+          community.general.ufw:
+            state: enabled
+            policy: deny
+            direction: incoming
+
+    - name: Открыть службу http на Rocky (firewalld)
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Разрешить службу http в зоне public
+          ansible.posix.firewalld:
+            service: "{{ firewalld_service }}"
+            zone: public
+            permanent: true
+            immediate: true
+            state: enabled
+
+    # --- время, cron, параметры ядра ---------------------------------------
+    - name: Часовой пояс стенда
+      community.general.timezone:
+        name: "{{ lab_timezone }}"
+
+    - name: "Ежедневная задача cron: отчёт о свободном месте"
+      ansible.builtin.cron:
+        name: "Проверка свободного места"
+        minute: "30"
+        hour: "3"
+        user: root
+        job: "/usr/bin/df -h > /var/log/df-daily.log 2>&1"
+        state: present
+
+    - name: Не принимать ICMP-редиректы
+      ansible.posix.sysctl:
+        name: net.ipv4.conf.all.accept_redirects
+        value: "0"
+        state: present
+        sysctl_set: true
+        reload: true
+
+  handlers:
+    - name: Обновить кэш apt
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"

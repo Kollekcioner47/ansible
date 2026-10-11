@@ -1,0 +1,50 @@
+---
+# requirements.yml — роли и коллекции учебного проекта практики 15.
+#
+# Один файл описывает и роли, и коллекции. Установка:
+#
+#   ansible-galaxy install -r requirements.yml
+#
+# Версии закреплены намеренно. Без версии ставится самая свежая
+# версия, и через месяц тот же файл даёт другое содержимое.
+# Точные номера смотрите на Galaxy:
+#
+#   ansible-galaxy role info geerlingguy.nginx
+#   ansible-galaxy collection list community.general --format json
+
+roles:
+  # Готовая роль веб-сервера nginx. Для ролей ansible-galaxy
+  # понимает только точную версию: диапазоны (>=, <) он для ролей
+  # не поддерживает.
+  - name: geerlingguy.nginx
+    version: "3.1.4"
+
+collections:
+  # ansible.posix — модули firewalld, sysctl, mount. Нужна своей
+  # роли web_admin и практике 13.
+  #
+  # Для коллекций диапазон допустим. Запись ниже читается так:
+  # «не ниже 1.5.4 и ниже 2.0.0». Верхняя граница страхует от
+  # мажорного обновления, в котором модуль может переехать.
+  - name: ansible.posix
+    version: ">=1.5.4,<2.0.0"
+
+  # community.general — модули ufw, lvg, lvol и другие модули
+  # общего назначения. Курс использует её в практиках 9, 10 и 13.
+  # Здесь только нижняя граница: мажорные версии этой коллекции
+  # выходят вместе с ansible-core, и курс на них рассчитан.
+  - name: community.general
+    version: ">=8.0.0"
+
+  # ansible.netcommon — подключение к сетевым устройствам
+  # (network_cli). В стенде не применяется, разбор — в приложении 3.
+  - name: ansible.netcommon
+    version: ">=5.0.0"
+
+  # Системные роли RHEL лежат не на Galaxy, а на Automation Hub,
+  # и требуют токен доступа. Поэтому строка закомментирована:
+  # на стенде эти роли ставятся пакетом rhel-system-roles (шаг 12).
+  #
+  # - name: redhat.rhel_system_roles
+  #   version: ">=1.21.0"
+  #   source: https://console.redhat.com/api/automation-hub/

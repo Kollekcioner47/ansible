@@ -1,0 +1,12 @@
+# Образец drop-in файла для sshd.
+# Копируется на узел как /etc/ssh/sshd_config.d/20-sshd-hardening.conf
+# задачами ansible.builtin.copy из 01_regexp.yml и 06_validate.yml.
+# Все параметры закомментированы: так выглядит файл до первого прогона.
+# Содержимое совпадает с напечатанным в 11_regex_configs.txt.
+
+#PermitRootLogin prohibit-password
+#PasswordAuthentication yes
+#MaxAuthTries 6
+#LoginGraceTime 2m
+X11Forwarding yes
+Banner none

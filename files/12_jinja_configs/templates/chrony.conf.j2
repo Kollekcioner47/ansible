@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_os_family | lower }}.
+
+{% for pool in chrony_pools %}
+pool {{ pool }} iburst
+{% endfor %}
+{% if chrony_servers | length > 0 %}
+{% for server in chrony_servers %}
+server {{ server.host }} {{ server.options | default('iburst') }}
+{% endfor %}
+{% endif %}
+driftfile {{ chrony_driftfile }}
+logdir {{ chrony_logdir }}
+rtcsync
+makestep 1.0 3
+allow {{ chrony_allow | default('127.0.0.1') }}

@@ -1,0 +1,38 @@
+# 05_until.yml — шаг 8 практики 7: ожидание готовности службы
+# через until, retries и delay.
+
+---
+- name: Дождаться готовности веб-сервера
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Подключить переменные семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+    - name: Запустить и включить веб-сервер
+      ansible.builtin.service:
+        name: "{{ web_service }}"
+        state: started
+        enabled: true
+
+    - name: Дождаться, пока systemd считает службу активной
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ web_service }}"
+      register: service_state
+      changed_when: false
+      until: service_state.stdout == "active"
+      # То же условие через код возврата: until: service_state.rc == 0
+      retries: 10
+      delay: 3
+
+    - name: Дождаться, пока порт 80 начнёт слушаться
+      ansible.builtin.command:
+        cmd: ss -ltn
+      register: listen_ports
+      changed_when: false
+      until: listen_ports.stdout is search(':80 ')
+      retries: 10
+      delay: 3

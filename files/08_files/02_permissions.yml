@@ -1,0 +1,73 @@
+---
+# 02_permissions.yml — шаг 6 практики 8.
+# Права на дерево сайта: файлы 0644, каталог 0755,
+# на каталог сайта добавлен бит setgid (2755).
+# Последние две задачи — пример из шага 12: stat и assert.
+#   ansible-playbook 02_permissions.yml
+
+- name: Привести права на сайте к описанным
+  hosts: web
+  become: true
+  gather_facts: false
+  vars:
+    site_dir: /var/www/html/site
+    file_mode: "0644"
+    dir_mode: "0755"
+    setgid_mode: "2755"
+  tasks:
+    - name: Убедиться, что каталог сайта существует
+      ansible.builtin.file:
+        path: "{{ site_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ dir_mode }}"
+
+    - name: Проверить, какие файлы лежат в каталоге сайта
+      ansible.builtin.find:
+        paths: "{{ site_dir }}"
+        file_type: file
+        recurse: true
+      register: site_files
+
+    - name: Показать найденные файлы
+      ansible.builtin.debug:
+        msg: "{{ site_files.files | map(attribute='path') | list }}"
+
+    - name: Поставить права на файлы сайта
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ file_mode }}"
+      loop: "{{ site_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Поставить на каталог сайта права с битом setgid
+      ansible.builtin.file:
+        path: "{{ site_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ setgid_mode }}"
+
+    - name: Проверить, что права на каталог действительно такие
+      ansible.builtin.stat:
+        path: "{{ site_dir }}"
+      register: site_dir_stat
+
+    - name: Отказаться работать, если права разъехались
+      ansible.builtin.assert:
+        that:
+          - site_dir_stat.stat.exists
+          - site_dir_stat.stat.isdir
+          - site_dir_stat.stat.mode == '2755'
+          - site_dir_stat.stat.pw_name == 'root'
+          - site_dir_stat.stat.gr_name == 'root'
+        fail_msg: >-
+          Каталог {{ site_dir }} имеет права {{ site_dir_stat.stat.mode }},
+          владельца {{ site_dir_stat.stat.pw_name }} и группу
+          {{ site_dir_stat.stat.gr_name }}, а ожидалось 2755 и root:root.
+        success_msg: "Каталог {{ site_dir }} в описанном состоянии."
+        quiet: true

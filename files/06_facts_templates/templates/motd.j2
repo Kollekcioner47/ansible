@@ -1,0 +1,12 @@
+{{ ansible_managed }}
+Учебный стенд курса Ansible: машины группы linux
+-------------------------------------------------------------------------
+{% for host in groups['linux'] %}
+{% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
+{% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+{{ '%-8s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
+{% endfor %}
+-------------------------------------------------------------------------
+Всего машин: {{ groups['linux'] | length }}
+Эта машина: {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
+Владелец машины: {{ ansible_local.site.general.owner | default('не назначен') }}

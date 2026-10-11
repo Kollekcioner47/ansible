@@ -1,0 +1,21 @@
+---
+# vars/main.yml — значения, которые роль ФИКСИРУЕТ.
+# Приоритет у них выше, чем у play, group_vars и host_vars:
+# перекрыть их можно только через --extra-vars.
+
+# Семейства ОС, с которыми роль умеет работать.
+web_admin_supported_families:
+  - Debian
+  - RedHat
+
+# Настройки по семействам ОС: ключ словаря — значение факта
+# ansible_os_family, поэтому в задачах нет ветвлений.
+web_admin_family_settings:
+  Debian:
+    package: apache2
+    service: apache2
+    firewall_package: ufw
+  RedHat:
+    package: httpd
+    service: httpd
+    firewall_package: firewalld

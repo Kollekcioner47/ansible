@@ -1,0 +1,31 @@
+---
+# Практика 6, шаг 8: главная страница сайта из шаблона Jinja2.
+# На db1 страница не нужна: там нет веб-сервера, поэтому запускаем
+# с ограничением по группе web:
+#   ansible-playbook 03_index_template.yml --limit web
+# Условие when, которое уберёт --limit, появится в практике 7.
+
+- name: Развернуть главную страницу сайта
+  hosts: linux
+  become: true
+  gather_facts: true
+  vars:
+    site_title: "Учебный стенд курса Ansible"
+    site_owner_default: "не назначен"
+  tasks:
+    - name: Создать каталог сайта
+      ansible.builtin.file:
+        path: /var/www/html
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Разложить главную страницу из шаблона
+      ansible.builtin.template:
+        src: templates/index.j2
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true

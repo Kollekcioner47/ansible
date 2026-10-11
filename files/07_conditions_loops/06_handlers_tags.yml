@@ -1,0 +1,56 @@
+# 06_handlers_tags.yml — шаги 9–10 практики 7.
+# Итоговый плейбук практики: оба семейства, обработчики
+# с listen и теги. Второй прогон даёт changed=0.
+
+---
+- name: Итоговый веб-сервер для Ubuntu и Rocky Linux
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  vars:
+    site_title: "Стенд курса Ansible"
+
+  handlers:
+    - name: Перезапустить веб-сервер
+      ansible.builtin.service:
+        name: "{{ web_service }}"
+        state: restarted
+      listen: "перезапустить веб-сервер"
+
+    - name: Проверить, что служба отвечает
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ web_service }}"
+      changed_when: false
+      listen: "перезапустить веб-сервер"
+
+  tasks:
+    - name: Подключить переменные семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+      tags: always
+
+    - name: Установить веб-сервер
+      ansible.builtin.package:
+        name: "{{ web_package }}"
+        state: present
+      tags: install
+
+    - name: Положить главную страницу сайта
+      ansible.builtin.copy:
+        content: "<h1>{{ site_title }}: {{ inventory_hostname }}</h1>\n"
+        dest: "{{ web_root }}/index.html"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - "перезапустить веб-сервер"
+        - Проверить, что служба отвечает
+      tags: config
+
+    - name: Запустить и включить веб-сервер
+      ansible.builtin.service:
+        name: "{{ web_service }}"
+        state: started
+        enabled: true
+      tags: service

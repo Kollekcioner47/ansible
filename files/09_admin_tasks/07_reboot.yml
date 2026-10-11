@@ -1,0 +1,28 @@
+---
+# 07_reboot.yml — практика 9, шаг 9: перезагрузка с ожиданием возврата.
+# Перезагружаем по одной машине:
+#   ansible-playbook 07_reboot.yml --limit web1 -e reboot_allowed=true
+# Общий для всего парка serial появится в практике 14.
+
+- name: Перезагрузка узла с ожиданием возврата
+  hosts: linux
+  become: true
+
+  vars:
+    # Перезагрузка — это действие, а не состояние. По умолчанию
+    # она выключена: плейбук, который сам перезагружает машины,
+    # запускают осознанно.
+    reboot_allowed: false
+
+  tasks:
+    - name: Перезагрузить узел и дождаться возврата
+      ansible.builtin.reboot:
+        msg: "Перезагрузка по практика 9 (Ansible)"
+        reboot_timeout: 600
+        test_command: /usr/bin/whoami
+      when: reboot_allowed | bool
+
+    - name: Убедиться, что узел снова отвечает на команды
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300

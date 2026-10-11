@@ -1,0 +1,88 @@
+---
+# 03_lineinfile.yml — шаг 7 практики 8.
+# Две настройки sshd в отдельном файле каталога sshd_config.d.
+# Файл основного конфига /etc/ssh/sshd_config не трогаем:
+# он принадлежит пакету openssh-server.
+# Имя файла начинается на 20: sshd берёт первое найденное значение,
+# а файлы каталога читает по алфавиту, поэтому наш файл должен идти
+# раньше 50-cloud-init.conf.
+#   ansible-playbook 03_lineinfile.yml
+# Второй прогон обязан дать changed=0.
+
+- name: Закрыть вход root и вход по паролю
+  hosts: web
+  become: true
+  gather_facts: true
+  vars:
+    sshd_dropin: /etc/ssh/sshd_config.d/20-sshd-hardening.conf
+  tasks:
+    - name: Убедиться, что каталог sshd_config.d существует
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Создать файл настроек sshd
+      ansible.builtin.file:
+        path: "{{ sshd_dropin }}"
+        state: touch
+        owner: root
+        group: root
+        mode: "0644"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Запретить вход root по SSH
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: '^#?\s*PermitRootLogin\s'
+        line: "PermitRootLogin no"
+        state: present
+        backup: true
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+    - name: Запретить вход по паролю
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: '^#?\s*PasswordAuthentication\s'
+        line: "PasswordAuthentication no"
+        state: present
+        backup: true
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+    - name: Проверить, что sshd принял конфигурацию
+      ansible.builtin.command:
+        cmd: sshd -t
+      changed_when: false
+
+    - name: Прочитать действующие значения настроек
+      ansible.builtin.shell:
+        cmd: >-
+          sshd -T | grep -E
+          -e '^permitrootlogin '
+          -e '^passwordauthentication '
+      register: sshd_effective
+      changed_when: false
+      failed_when: sshd_effective.rc not in [0, 1]
+
+    - name: Отказаться работать, если настройки не применились
+      ansible.builtin.assert:
+        that:
+          - sshd_effective.stdout is search('(?m)^permitrootlogin no$')
+          - sshd_effective.stdout is search('(?m)^passwordauthentication no$')
+        fail_msg: >-
+          sshd -T не показывает наши значения: действующая конфигурация
+          отличается от описанной. Проверьте, что файл
+          20-sshd-hardening.conf читается раньше 50-cloud-init.conf
+          и ни один файл каталога sshd_config.d его не перекрывает.
+        success_msg: "Обе настройки действуют: вход root и вход по паролю закрыты."
+
+  handlers:
+    - name: Перезапустить службу SSH
+      ansible.builtin.service:
+        name: "{{ ssh_service }}"
+        state: restarted

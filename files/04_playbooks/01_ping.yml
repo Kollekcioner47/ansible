@@ -1,0 +1,9 @@
+# 01_ping.yml — шаг 2 практики 4: первый плейбук.
+# Один play, одна задача, ничего не меняется на узлах.
+
+- name: Проверить связь с узлами стенда
+  hosts: web:db
+  gather_facts: false
+  tasks:
+    - name: Ответить pong, если узел доступен
+      ansible.builtin.ping:

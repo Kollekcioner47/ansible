@@ -1,0 +1,61 @@
+# 04_loops.yml — шаг 7 практики 7: циклы loop, dict2items
+# и loop_control. Пакеты с общим именем ставятся одинаково на обоих
+# семействах, поэтому здесь хватает общего модуля пакетов.
+
+---
+- name: Циклы по списку, словарю и парам значений
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  vars:
+    base_packages:
+      - curl
+      - wget
+      - rsync
+
+    # Словарь: каталог сайта -> права. Порядок здесь не важен,
+    # важна пара «ключ — значение».
+    site_directories:
+      /var/www/html: "0755"
+      /var/www/html/assets: "0755"
+      /var/www/html/upload: "0755"
+
+    site_files:
+      - index.html
+      - robots.txt
+
+  tasks:
+    - name: Установить базовые пакеты
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ base_packages }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Создать каталоги сайта по словарю
+      ansible.builtin.file:
+        path: "{{ item.key }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.value }}"
+      loop: "{{ site_directories | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+        index_var: dir_number
+        pause: 1
+
+    - name: Показать номер итерации и права из словаря
+      ansible.builtin.debug:
+        msg: "Итерация {{ dir_number }}: {{ item.key }}, права {{ item.value }}"
+      loop: "{{ site_directories | dict2items }}"
+      loop_control:
+        index_var: dir_number
+        label: "{{ item.key }}"
+
+    - name: Показать пары «каталог — файл» вложенным циклом
+      ansible.builtin.debug:
+        msg: "{{ item.0 }}/{{ item.1 }}"
+      loop: "{{ site_directories.keys() | list | product(site_files) | list }}"

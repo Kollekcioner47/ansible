@@ -1,0 +1,35 @@
+# 02_two_families.yml — шаг 3 практики 7.
+# Вариант «в лоб»: на каждое действие по две задачи с when.
+
+---
+- name: Веб-сервер на Ubuntu и Rocky Linux двумя задачами с when
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Установить apache2 на Ubuntu
+      ansible.builtin.apt:
+        name: apache2
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Установить httpd на Rocky Linux
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Запустить и включить apache2 на Ubuntu
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+      when: ansible_os_family == "Debian"
+
+    - name: Запустить и включить httpd на Rocky Linux
+      ansible.builtin.service:
+        name: httpd
+        state: started
+        enabled: true
+      when: ansible_os_family == "RedHat"

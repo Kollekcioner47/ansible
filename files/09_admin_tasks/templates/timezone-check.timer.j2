@@ -1,0 +1,10 @@
+[Unit]
+Description=Ежедневная проверка часового пояса
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=timezone-check.service
+
+[Install]
+WantedBy=timers.target

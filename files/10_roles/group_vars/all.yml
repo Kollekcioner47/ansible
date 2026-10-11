@@ -1,0 +1,15 @@
+---
+# group_vars/all.yml — переменные всего проекта практики 10.
+# Файл читается для каждой машины инвентаря: и для web1 с web2,
+# и для db1.
+
+# Подключение: те же пользователь и ключ, что в практиках 2–9.
+ansible_user: engineer
+ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+
+# Владелец машины: учебное значение стенда. Переменная роли
+# web_admin_owner берёт значение отсюда (см. group_vars/web.yml).
+lab_owner: engineer
+
+# Порт сайта: его открывает межсетевой экран в роли.
+web_admin_port: 80

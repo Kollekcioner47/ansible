@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# Файл собран из шаблона resolv.conf.j2.
+# Значения — переменные resolv_*, заданные в плейбуке 03_motd.yml.
+
+{% for server in resolv_nameservers %}
+nameserver {{ server }}
+{% endfor %}
+{% if resolv_search is defined and resolv_search | length > 0 %}
+search {{ resolv_search | join(' ') }}
+{% endif %}
+options timeout:{{ resolv_timeout | default(2) }} attempts:{{ resolv_attempts | default(2) }}

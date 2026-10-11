@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>{{ web_admin_site_title }} — {{ inventory_hostname }}</title>
+  <link rel="stylesheet" href="{{ web_admin_style_file }}">
+</head>
+<body>
+  <h1>{{ web_admin_site_title }}</h1>
+  <p class="managed">{{ ansible_managed }}</p>
+
+  <table>
+    <tr><th>Имя машины</th><td>{{ ansible_facts['hostname'] }}</td></tr>
+    <tr><th>Адрес</th><td>{{ ansible_facts['default_ipv4']['address'] }}</td></tr>
+    <tr><th>Семейство ОС</th><td>{{ ansible_facts['os_family'] }}</td></tr>
+    <tr><th>Веб-сервер</th><td>{{ web_admin_service }}</td></tr>
+    <tr><th>Владелец машины</th><td>{{ web_admin_owner }}</td></tr>
+  </table>
+
+  <h2>Машины группы web</h2>
+  <ul>
+{% for host in groups['web'] | sort %}
+    <li>{{ host }} — {{ hostvars[host]['ansible_host'] | default('адрес неизвестен') }}</li>
+{% endfor %}
+  </ul>
+
+  <p>Группы этой машины: {{ group_names | sort | join(', ') }}</p>
+</body>
+</html>

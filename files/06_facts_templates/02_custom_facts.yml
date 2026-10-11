@@ -1,0 +1,55 @@
+---
+# Практика 6, шаг 4: настраиваемые факты в /etc/ansible/facts.d.
+# Запуск: ansible-playbook 02_custom_facts.yml
+#
+# Два play, а не один: набор фактов собирается в начале play, до задач.
+# Поэтому факты, положенные первым play, видно только во втором.
+
+- name: Разложить настраиваемые факты по узлам
+  hosts: linux
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Создать каталог для настраиваемых фактов
+      ansible.builtin.file:
+        path: /etc/ansible/facts.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Положить настраиваемые факты site.fact и hardware.fact
+      ansible.builtin.copy:
+        src: "facts.d/{{ item }}"
+        dest: "/etc/ansible/facts.d/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - site.fact
+        - hardware.fact
+
+- name: Показать настраиваемые факты
+  hosts: linux
+  become: false
+  gather_facts: true
+  tasks:
+    - name: Убедиться, что настраиваемый факт прочитан
+      ansible.builtin.assert:
+        that:
+          - ansible_local.site.general.owner is defined
+        success_msg: "Владелец машины из site.fact: {{ ansible_local.site.general.owner }}"
+        fail_msg: "Настраиваемый факт не прочитан: проверьте /etc/ansible/facts.d на узле"
+
+    - name: Показать значения настраиваемых фактов
+      ansible.builtin.debug:
+        msg:
+          - "Файл site.fact (INI), секция general:"
+          - "  владелец: {{ ansible_local.site.general.owner }}"
+          - "  роль: {{ ansible_local.site.general.role }}"
+          - "  версия стенда: {{ ansible_local.site.general.version }}"
+          - "Файл hardware.fact (JSON), ключи верхнего уровня:"
+          - "  модель: {{ ansible_local.hardware.model }}"
+          - "  ядер: {{ ansible_local.hardware.cpu_cores }}"
+          - "  память, МБ: {{ ansible_local.hardware.memory_mb }}"
+          - "  куплена: {{ ansible_local.hardware.purchased }}"

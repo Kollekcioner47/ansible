@@ -1,0 +1,16 @@
+---
+# Практика 6, шаг 9: /etc/motd из шаблона с циклом по группе linux.
+# Запуск: ansible-playbook 04_motd.yml
+
+- name: Положить /etc/motd из шаблона
+  hosts: linux
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Разложить /etc/motd
+      ansible.builtin.template:
+        src: templates/motd.j2
+        dest: /etc/motd
+        owner: root
+        group: root
+        mode: "0644"

@@ -1,0 +1,1293 @@
+Практика 7. Условия, циклы, блоки, обработчики.
+
+ЭТА ПРАКТИКА — ПРО ДВА СЕМЕЙСТВА ОС СРАЗУ. В практике 4 плейбук
+работал на Ubuntu и падал на Rocky Linux. Здесь он научится
+принимать решения: ставить apache2 или httpd, ждать готовности
+службы и перезапускать её только при изменении конфигурации.
+
+
+=========================================================================
+ЧТО МЫ СДЕЛАЕМ
+=========================================================================
+
+Разберём условия when: по фактам, по переменным и по результату
+register. Соберём один плейбук для Ubuntu и Rocky Linux: сначала
+двумя задачами с when, потом блоками с одним when на блок, потом
+через переменные семейства ОС. Познакомимся с block, rescue
+и always. Разберёмся, чем ошибка отличается от «не ошибки»:
+ignore_errors, failed_when, changed_when. Пройдём циклы loop,
+dict2items и loop_control, дождёмся готовности службы через until,
+retries и delay, разберём обработчики с listen и теги. В конце
+тот же плейбук на втором прогоне даст changed=0.
+
+
+=========================================================================
+ЧТО ПОНАДОБИТСЯ
+=========================================================================
+
+СТЕНД ИЗ ПРАКТИК 1–6 В РАБОЧЕМ СОСТОЯНИИ:
+
+  control  10.0.2.5   — управляющая машина, Ubuntu 26.04 LTS;
+  web1     10.0.2.11  — Ubuntu 26.04 LTS;
+  web2     10.0.2.12  — Ubuntu 26.04 LTS;
+  db1      10.0.2.13  — Rocky Linux 10.
+
+Нужны: пользователь engineer, вход по ключу
+/home/engineer/.ssh/id_ed25519, sudo без пароля, активированное
+окружение (source ~/ansible-venv/bin/activate), инвентарь
+и ansible.cfg из практики 2. Учебный пароль Console47 не нужен.
+
+ЧТО НУЖНО ИЗ РЕПОЗИТОРИЯ КУРСА — восемь файлов:
+
+  files/07_conditions_loops/01_when.yml
+  files/07_conditions_loops/02_two_families.yml
+  files/07_conditions_loops/03_blocks.yml
+  files/07_conditions_loops/04_loops.yml
+  files/07_conditions_loops/05_until.yml
+  files/07_conditions_loops/06_handlers_tags.yml
+  files/07_conditions_loops/vars/Debian.yml
+  files/07_conditions_loops/vars/RedHat.yml
+
+Все они кладутся в рабочий каталог ~/ansible-lab — рядом с ansible.cfg
+и inventory.ini из практики 2. Каталог vars/ создаётся там же: путь
+vars/… относительный, он отсчитывается от каталога плейбука.
+
+ПОЧЕМУ ИМЕННО ТАК: Ansible ищет ansible.cfg только в четырёх местах —
+в ANSIBLE_CONFIG, в текущем каталоге, в ~/.ansible.cfg
+и в /etc/ansible/ansible.cfg — и вверх по каталогам не поднимается.
+Из подкаталога практики не нашлись бы ни inventory.ini, ни remote_user
+из практики 2, и плейбук не подключился бы к узлам. Поэтому все
+практики курса запускаются из ~/ansible-lab.
+
+ВРЕМЯ: 2 академических часа. Межсетевой экран (ufw на Ubuntu,
+firewalld на Rocky Linux) здесь только упоминается: разбор правил
+и модулей — практика 9.
+
+
+#########################################################################
+ЧАСТЬ 1. УСЛОВИЯ И ДВА СЕМЕЙСТВА ОС
+#########################################################################
+
+
+=========================================================================
+ШАГ 1. ПОЧЕМУ ОДИН ПЛЕЙБУК ЛОМАЕТСЯ НА ROCKY LINUX
+=========================================================================
+
+Практика 4 закончилась тем, что плейбук 04_web_full.yml работал
+на web1 и web2 и падал на db1: на Rocky Linux модуль apt не работает
+вообще, потому что там нет python3-apt.
+
+  TASK [Обновить кэш пакетов]
+  fatal: [db1]: FAILED! => {"changed": false, "msg": "Could not import the python3-apt module using /usr/bin/python3 (...). Ensure python3-apt package is installed (either manually or via the auto_install_module_deps option) or that you have specified the correct ansible_python_interpreter."}
+
+Сообщение зависит от версии ansible-core, но падает уже первая
+задача — та, где вызывается ansible.builtin.apt, — и говорит она
+про отсутствующий python3-apt, а не про пакет apache2. Практика 4
+показывает это на первой же задаче. Причина для нас всё равно одна:
+в семействе RedHat веб-сервер Apache ставится пакетом httpd, служба
+тоже называется httpd, а конфигурация лежит не в /etc/apache2,
+а в /etc/httpd/conf.d.
+
+ПОЧЕМУ ИМЕННО ТАК: модуль apt знает только про apt, модуль dnf —
+только про dnf. Ни один модуль не знает, что apache2 и httpd — один
+и тот же веб-сервер. Это знание живёт в описании — в плейбуке или
+в переменных, и добавить его должен человек.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: парк из одной операционной системы — редкость.
+Обычно рядом живут Ubuntu и Rocky Linux, Debian и AlmaLinux,
+и различаются имена пакетов, пути конфигурации и имена служб.
+
+Сказать плейбуку, где он находится, можно тремя способами: условием
+when в задаче, блоком с одним when на группу задач и переменными
+по семействам ОС. Разберём все три по порядку.
+
+
+=========================================================================
+ШАГ 2. WHEN: УСЛОВИЯ ПО ФАКТАМ, ПЕРЕМЕННЫМ И REGISTER
+=========================================================================
+
+Значение when — выражение на языке Jinja2, записанное без шаблонных
+скобок: Ansible сам подставит переменные и вычислит результат.
+Результат обязан быть логическим. Работаем из ~/ansible-lab, рядом
+с ansible.cfg и inventory.ini из практики 2. Создайте файл
+01_when.yml:
+
+  cd ~/ansible-lab
+
+  # 01_when.yml — шаг 2 практики 7: условия when.
+  # Плейбук ничего не меняет на узлах: только проверки.
+
+  ---
+  - name: Условия по фактам, переменным и результату задачи
+    hosts: web:db
+    become: false
+    gather_facts: true
+
+    vars:
+      web_port: 80
+      allowed_families:
+        - Debian
+        - RedHat
+
+    tasks:
+      - name: Показать семейство ОС и дистрибутив узла
+        ansible.builtin.debug:
+          msg: "{{ ansible_os_family }} / {{ ansible_distribution }}"
+
+      - name: Условие по факту с отрицанием
+        ansible.builtin.debug:
+          msg: "Это не Ubuntu: пакет веб-сервера называется httpd"
+        when: ansible_os_family != "Debian"
+
+      - name: Условие по списку и по группе инвентаря
+        ansible.builtin.debug:
+          msg: "{{ inventory_hostname }} поддержан и не входит в группу db"
+        when:
+          - ansible_os_family in allowed_families
+          - inventory_hostname not in groups['db']
+
+      - name: Условие со скобками и по переменной
+        ansible.builtin.debug:
+          msg: "Семейство поддержано, порт равен {{ web_port }}"
+        when: >
+          (ansible_os_family == "Debian" or ansible_os_family == "RedHat")
+          and web_port == 80
+
+      - name: Условие по необъявленной переменной
+        ansible.builtin.debug:
+          msg: "Переменная ssl_certificate_path не объявлена"
+        when: ssl_certificate_path is not defined
+
+      - name: Прочитать имя узла из файла
+        ansible.builtin.command:
+          cmd: cat /etc/hostname
+        register: hostname_file
+        changed_when: false
+
+      - name: Условие по результату задачи
+        ansible.builtin.debug:
+          msg: "hostname: {{ hostname_file.stdout_lines[0] }}"
+        when:
+          - hostname_file.rc == 0
+          - hostname_file.stdout | length > 0
+
+Запускаем:
+
+  ansible-playbook 01_when.yml
+
+  TASK [Условие по факту с отрицанием]
+  skipping: [db1]
+  ok: [web1] => {
+      "msg": "Это не Ubuntu: пакет веб-сервера называется httpd"
+  }
+
+  TASK [Условие по списку и по группе инвентаря]
+  skipping: [db1]
+  ok: [web1]
+
+  TASK [Условие по результату задачи]
+  ok: [db1]
+  ok: [web1]
+
+  PLAY RECAP
+  db1    : ok=7    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+  web1   : ok=7    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+  web2   : ok=7    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+
+Вывод сокращён. Строки skipping — не ошибка: так Ansible сообщает,
+что задача пропущена, потому что условие ложно. На web1 пропущена
+задача с отрицанием (там Debian), на db1 — задача по группе
+инвентаря. На каждом узле пропущена ровно одна задача, но разная.
+
+ОПЕРАТОРЫ, КОТОРЫЕ ВСТРЕЧАЮТСЯ ЧАЩЕ ВСЕГО:
+
+  == и !=        сравнение:      ansible_os_family == "Debian"
+  in и not in    вхождение:      ansible_os_family in allowed_families
+  is defined     объявлена:      web_port is defined
+  is not defined не объявлена:   ssl_certificate_path is not defined
+  and, or, not   логика:         скобки ( ) задают порядок
+
+ПОЧЕМУ ВНУТРИ WHEN НЕТ {{ }}. Значение when — это выражение, а не
+шаблон, поэтому скобки {{ }} в нём лишние: Ansible подставляет
+переменные сам. Если написать их по привычке, получится не то, что
+задумано:
+
+  when: "{{ ansible_os_family == 'Debian' }}"
+
+В ansible-core 2.19 такая запись даёт предупреждение:
+
+  [DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}.
+
+А если скобки стоят внутри выражения, разбор шаблона падает:
+
+  when: "{{ ansible_os_family }} == 'Debian'"
+
+  Syntax error in expression. Template delimiters are not supported in expressions: chunk after expression
+
+Правило простое: внутри when имена переменных пишутся без скобок,
+а скобки нужны там, где собирается текст: в msg, в content, в шаблоне.
+
+ВАЖНО: в ansible-core 2.19 результат условия обязан быть логическим.
+Запись when: web_port — без сравнения — раньше работала как «непустое
+значение это истина», а теперь это ошибка:
+
+  Conditional result (True) was derived from value of type 'int' at '<источник переменной>'. Conditionals must have a boolean result.
+
+Проверяйте явно: when: web_port > 0, when: site_title | length > 0,
+when: флаг is truthy. Такое условие читается однозначно и не сломается
+при обновлении Ansible.
+
+ПРОВЕРКА: посмотрите, что происходит только на одной машине:
+
+  ansible-playbook 01_when.yml --limit db1
+
+Одна задача из семи пропущена, changed равен нулю, failed нет.
+
+
+=========================================================================
+ШАГ 3. ДВА СЕМЕЙСТВА «В ЛОБ»: ДВЕ ЗАДАЧИ С WHEN
+=========================================================================
+
+Первый рабочий вариант — на каждое действие по две задачи со своим
+when. Файл 02_two_families.yml:
+
+  # 02_two_families.yml — шаг 3 практики 7.
+  # Вариант «в лоб»: на каждое действие по две задачи с when.
+
+  ---
+  - name: Веб-сервер на Ubuntu и Rocky Linux двумя задачами с when
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    tasks:
+      - name: Установить apache2 на Ubuntu
+        ansible.builtin.apt:
+          name: apache2
+          state: present
+        when: ansible_os_family == "Debian"
+
+      - name: Установить httpd на Rocky Linux
+        ansible.builtin.dnf:
+          name: httpd
+          state: present
+        when: ansible_os_family == "RedHat"
+
+      - name: Запустить и включить apache2 на Ubuntu
+        ansible.builtin.service:
+          name: apache2
+          state: started
+          enabled: true
+        when: ansible_os_family == "Debian"
+
+      - name: Запустить и включить httpd на Rocky Linux
+        ansible.builtin.service:
+          name: httpd
+          state: started
+          enabled: true
+        when: ansible_os_family == "RedHat"
+
+Здесь и дальше используется ansible.builtin.service — тот же модуль,
+что и в практике 4: он сам определяет, чем управлять службой.
+Второй модуль для служб, ansible.builtin.systemd_service (короткое
+имя systemd — прежнее, в примерах практики 9 записано именно оно),
+разбирается в практике 9, шаг 6: на службах и на своём таймере.
+
+Запускаем:
+
+  ansible-playbook 02_two_families.yml
+
+  TASK [Установить apache2 на Ubuntu]
+  changed: [web1]
+  changed: [web2]
+  skipping: [db1]
+
+  TASK [Установить httpd на Rocky Linux]
+  skipping: [web1]
+  skipping: [web2]
+  changed: [db1]
+
+  TASK [Запустить и включить httpd на Rocky Linux]
+  skipping: [web1]
+  skipping: [web2]
+  changed: [db1]
+
+  PLAY RECAP
+  db1    : ok=3    changed=2    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0
+  web1   : ok=3    changed=2    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0
+  web2   : ok=3    changed=2    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0
+
+Работает, и ни одной строки failed. Но посмотрите на цену: половина
+плейбука не выполняется ни на одной машине. Две задачи пропущены
+на каждой — на Ubuntu это ветка Rocky Linux, на Rocky — ветка Ubuntu.
+Прочитать плейбук можно только целиком, мысленно вычёркивая половину
+строк.
+
+ПОЧЕМУ ИМЕННО ТАК: у этого варианта есть достоинство — он понятен,
+когда семейств два, действий три и плейбук больше не меняется. Как
+только действий становится больше, вариант «в лоб» начинает мешать.
+
+ЧЕГО НЕ ДЕЛАТЬ: не путайте две разные вещи. «Задача никогда не
+выполняется на этой машине» — это условие, и это нормально. «Задача
+выполняется и падает» — это ошибка, и так выглядела прежняя версия
+курса, где рядом с apt стоял вызов yum без условия.
+
+ПРОВЕРКА: посмотрите, что получилось на db1:
+
+  ansible db1 -b -m ansible.builtin.command -a "systemctl is-active httpd"
+  db1 | CHANGED | rc=0 >>
+  active
+
+
+=========================================================================
+ШАГ 4. ОДИН WHEN НА БЛОК И ОТКАТ ЧЕРЕЗ RESCUE
+=========================================================================
+
+Ключ block собирает задачи в группу, и условие у блока действует
+на все задачи внутри. Файл 03_blocks.yml целиком:
+
+  # 03_blocks.yml — шаг 4 практики 7: block, rescue и always.
+  # Первый play — по блоку на семейство: один when на блок.
+  # Второй play падает намеренно: так видно, что делает rescue.
+
+  ---
+  - name: Веб-сервер на двух семействах двумя блоками
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    tasks:
+      - name: Ветка Ubuntu — установить и запустить apache2
+        block:
+          - name: Установить пакет apache2
+            ansible.builtin.apt:
+              name: apache2
+              state: present
+
+          - name: Запустить и включить службу apache2
+            ansible.builtin.service:
+              name: apache2
+              state: started
+              enabled: true
+
+        rescue:
+          - name: Снять пакет apache2 как откат
+            ansible.builtin.apt:
+              name: apache2
+              state: absent
+
+        when: ansible_os_family == "Debian"
+
+      - name: Ветка Rocky Linux — установить и запустить httpd
+        block:
+          - name: Установить пакет httpd
+            ansible.builtin.dnf:
+              name: httpd
+              state: present
+
+          - name: Запустить и включить службу httpd
+            ansible.builtin.service:
+              name: httpd
+              state: started
+              enabled: true
+
+        rescue:
+          - name: Снять пакет httpd как откат
+            ansible.builtin.dnf:
+              name: httpd
+              state: absent
+
+        when: ansible_os_family == "RedHat"
+
+  - name: Опыт с откатом — задача падает, rescue откатывает, always подводит итог
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    vars:
+      # Пакета с таким именем нет ни в Ubuntu, ни в Rocky Linux:
+      # он нужен только для того, чтобы блок честно упал.
+      lab_absent_package: lab-extra-package
+
+    tasks:
+      - name: Опыт с откатом
+        block:
+          - name: Установить пакет, которого нет в репозиториях
+            ansible.builtin.package:
+              name: "{{ lab_absent_package }}"
+              state: present
+
+        rescue:
+          - name: Объяснить, что произошло
+            ansible.builtin.debug:
+              msg: "Пакет {{ lab_absent_package }} не установился, откатываем опыт"
+
+          - name: Снять пакет, если он всё-таки успел встать
+            ansible.builtin.package:
+              name: "{{ lab_absent_package }}"
+              state: absent
+
+        always:
+          - name: Записать итог опыта
+            ansible.builtin.debug:
+              msg: "Опыт на {{ inventory_hostname }} завершён, плейбук идёт дальше"
+
+Первый play даёт то же состояние, что и файл шага 3, но условие стоит
+один раз на блок. Добавить в блок новую задачу можно, не думая
+про when: условие уже написано.
+
+ЧЕГО БЛОК НЕ ДЕЛАЕТ: он не ускоряет выполнение. Пропущенные задачи
+на узел вообще не отправляются, условие вычисляется на управляющей
+машине. Экономия — время автора и того, кто читает плейбук перед
+запуском. За скорость отвечают другие вещи: forks, gather_facts
+и разумный delay в until (шаг 8).
+
+Запускаем второй play — он падает намеренно:
+
+  ansible-playbook 03_blocks.yml
+
+  TASK [Опыт с откатом]
+  fatal: [web1]: FAILED! => {"changed": false, "msg": "No package matching 'lab-extra-package' is available"}
+  fatal: [db1]: FAILED! => {"changed": false, "failures": ["No package lab-extra-package available."], "msg": "Failed to install some of the specified packages", "rc": 1}
+
+  TASK [Объяснить, что произошло]
+  ok: [db1] => {
+      "msg": "Пакет lab-extra-package не установился, откатываем опыт"
+  }
+
+  TASK [Записать итог опыта]
+  ok: [web1] => {
+      "msg": "Опыт на web1 завершён, плейбук идёт дальше"
+  }
+
+  PLAY RECAP
+  db1    : ok=7    changed=0    unreachable=0    failed=0    skipped=2    rescued=1    ignored=0
+  web1   : ok=7    changed=0    unreachable=0    failed=0    skipped=2    rescued=1    ignored=0
+
+Строка fatal с FAILED! — настоящий отказ: пакета нет в репозиториях.
+Дальше сработала ветка rescue: сообщение и откат. Ключ always
+выполнился последним, хотя блок не завершился успешно. В отчёте
+появилась колонка rescued=1: отказ обработан, машина не считается
+сломанной, play продолжается. У обычной ошибки было бы failed=1,
+и машина выбыла бы из play — как в шаге 1.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: rescue не даёт оставить систему в половинчатом
+состоянии. Пример: обновление пакета вместе с правкой конфигурации.
+Если новый конфиг не проходит проверку, rescue возвращает старый
+файл из резервной копии, а always пишет строку в отчёт. Без этого
+машина останется с нерабочим конфигом, и узнают об этом
+от пользователей, а не из отчёта.
+
+ВАЖНО: если упадёт задача внутри rescue, машина выбывает из play
+окончательно, но always всё равно выполнится. Поэтому в rescue
+должны стоять действия, которые не могут не сработать: сообщение,
+запись в журнал, удаление временного файла.
+
+ПРОВЕРКА: в rescue доступны переменные ansible_failed_task
+и ansible_failed_result. Добавьте в блок «Опыт с откатом» задачу:
+
+  - name: Показать, что именно упало
+    ansible.builtin.debug:
+      var: ansible_failed_result.msg
+
+В выводе появится текст отказа, полученный от модуля.
+
+
+#########################################################################
+ЧАСТЬ 2. ЧТО ОТЛИЧАЕТ РАБОТУ ОТ УЧЕБНОГО ПРИМЕРА
+#########################################################################
+
+
+=========================================================================
+ШАГ 5. ПЕРЕМЕННЫЕ ПО СЕМЕЙСТВАМ ВМЕСТО WHEN В КАЖДОЙ ЗАДАЧЕ
+=========================================================================
+
+Два блока убрали повтор условий, но имена пакетов и служб остались
+в задачах. Если в парке появится AlmaLinux, придётся править задачи.
+Правильнее держать различия в данных: тогда задачи выглядят
+одинаково для любого семейства. Создайте каталог vars и два файла:
+
+  cd ~/ansible-lab
+  mkdir -p vars
+
+  ---
+  # Переменные семейства Debian (Ubuntu 26.04 LTS: web1, web2).
+  web_package: apache2
+  web_service: apache2
+  web_config_dir: /etc/apache2/sites-available
+  web_root: /var/www/html
+  firewall_package: ufw
+
+  ---
+  # Переменные семейства RedHat (Rocky Linux 10: db1).
+  web_package: httpd
+  web_service: httpd
+  web_config_dir: /etc/httpd/conf.d
+  web_root: /var/www/html
+  firewall_package: firewalld
+
+Подключаются они одной задачей, которая есть в файлах 05_until.yml
+и 06_handlers_tags.yml:
+
+  - name: Подключить переменные семейства ОС
+    ansible.builtin.include_vars:
+      file: "vars/{{ ansible_os_family }}.yml"
+
+ПОЧЕМУ ИМЕННО ТАК: имя файла собирается из факта, поэтому для Debian
+читается vars/Debian.yml, а для RedHat — vars/RedHat.yml. Модуль
+include_vars выполняет шаблон и подключает нужный файл на каждом
+узле отдельно: у web1 появятся значения Ubuntu, у db1 — Rocky. Один
+плейбук, одни имена переменных, разные данные.
+
+ЧЕГО НЕ ДЕЛАТЬ: не подключайте оба файла сразу — второй перекроет
+первый, и на Ubuntu окажется httpd. И не ставьте на include_vars
+условие when по тому же самому факту: это две проверки одного
+и того же.
+
+ВАЖНО: имена web_package и web_service уже объявлены в group_vars
+из практики 2 — с теми же значениями. Конфликта нет, но помните:
+include_vars перекрывает group_vars на время play. Держите различия
+в одном месте, иначе через месяц никто не скажет, кто победил.
+
+ПРОВЕРКА: запустите 05_until.yml с -v и посмотрите, какие имена
+попали в команду на разных машинах:
+
+  ok: [db1] => {"cmd": ["systemctl", "is-active", "httpd"], ...}
+  ok: [web1] => {"cmd": ["systemctl", "is-active", "apache2"], ...}
+
+Переменная web_config_dir в этой практике не используется: каталог
+конфигурации понадобится в практике 12.
+
+
+=========================================================================
+ШАГ 6. ОШИБКИ, КОТОРЫЕ НЕ ОШИБКИ
+=========================================================================
+
+Три ключа меняют отношение Ansible к результату задачи.
+
+changed_when МЕНЯЕТ ПРИЗНАК ИЗМЕНЕНИЯ. Модуль command всегда сообщает
+changed, даже если команда только читала файл. В 01_when.yml
+и 05_until.yml у таких задач стоит changed_when: false. Без него
+в отчёте всегда было бы changed, и обещание «второй прогон даёт
+changed=0» не выполнялось бы никогда.
+
+failed_when МЕНЯЕТ ПРИЗНАК ОТКАЗА: так задаче говорят, что считать
+отказом. Два полезных направления:
+
+  failed_when: false          — не считать отказом ничего;
+  failed_when: result.rc > 1  — отказом считать только серьёзный код.
+
+Первый вариант нужен, когда неудача задачи — тоже информация. Пример:
+проверка, установлен ли пакет. Команда rpm -q вернёт 1, если пакета
+нет, и это нормальный результат проверки:
+
+  - name: Проверить, установлен ли httpd
+    ansible.builtin.command:
+      cmd: rpm -q httpd
+    register: httpd_check
+    changed_when: false
+    failed_when: false
+    when: ansible_os_family == "RedHat"
+
+ignore_errors ПРОСТО ПРОДОЛЖАЕТ РАБОТУ: задача падает, в выводе
+появляется fatal и строка ...ignoring, машина не выбывает из play.
+
+ЧЕГО НЕ ДЕЛАТЬ: не «лечите» ignore_errors ошибки, которые непонятны.
+Он не устраняет причину, а прячет её: в отчёте будет ignored вместо
+failed, и плейбук пойдёт дальше по машине, где предыдущий шаг
+не выполнился. Если отказ допустим, пишите failed_when с понятным
+условием: тогда видно, какой именно отказ мы считаем нормальным.
+ignore_errors оправдан в двух случаях — задача-разведка, результат
+которой нужен только для отчёта, и обход известной ошибки в чужом
+модуле, когда причина записана в комментарии рядом.
+
+ПОЧЕМУ ИМЕННО ТАК: ценность Ansible — в отчёте. Пока failed означает
+«здесь не получилось», отчёт читается за пять секунд. Как только
+failed начали глушить, отчёт перестаёт что-либо значить.
+
+
+=========================================================================
+ШАГ 7. ЦИКЛЫ: LOOP, DICT2ITEMS И LOOP_CONTROL
+=========================================================================
+
+Второй способ убрать повторы — цикл. Он нужен там, где действий
+много, а различаются они одним значением: списком пакетов, списком
+каталогов, списком пользователей. Файл 04_loops.yml:
+
+  # 04_loops.yml — шаг 7 практики 7: циклы loop, dict2items
+  # и loop_control. Пакеты с общим именем ставятся одинаково на обоих
+  # семействах, поэтому здесь хватает общего модуля пакетов.
+
+  ---
+  - name: Циклы по списку, словарю и парам значений
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    vars:
+      base_packages:
+        - curl
+        - wget
+        - rsync
+
+      # Словарь: каталог сайта -> права. Порядок здесь не важен,
+      # важна пара «ключ — значение».
+      site_directories:
+        /var/www/html: "0755"
+        /var/www/html/assets: "0755"
+        /var/www/html/upload: "0755"
+
+      site_files:
+        - index.html
+        - robots.txt
+
+    tasks:
+      - name: Установить базовые пакеты
+        ansible.builtin.package:
+          name: "{{ item }}"
+          state: present
+        loop: "{{ base_packages }}"
+        loop_control:
+          label: "{{ item }}"
+
+      - name: Создать каталоги сайта по словарю
+        ansible.builtin.file:
+          path: "{{ item.key }}"
+          state: directory
+          owner: root
+          group: root
+          mode: "{{ item.value }}"
+        loop: "{{ site_directories | dict2items }}"
+        loop_control:
+          label: "{{ item.key }}"
+          index_var: dir_number
+          pause: 1
+
+      - name: Показать номер итерации и права из словаря
+        ansible.builtin.debug:
+          msg: "Итерация {{ dir_number }}: {{ item.key }}, права {{ item.value }}"
+        loop: "{{ site_directories | dict2items }}"
+        loop_control:
+          index_var: dir_number
+          label: "{{ item.key }}"
+
+      - name: Показать пары «каталог — файл» вложенным циклом
+        ansible.builtin.debug:
+          msg: "{{ item.0 }}/{{ item.1 }}"
+        loop: "{{ site_directories.keys() | list | product(site_files) | list }}"
+
+Запускаем:
+
+  ansible-playbook 04_loops.yml
+
+  TASK [Установить базовые пакеты]
+  ok: [db1] => (item=curl)
+  ok: [web1] => (item=curl)
+  ... строки для wget и rsync выглядят так же
+
+  TASK [Создать каталоги сайта по словарю]
+  changed: [web1] => (item=/var/www/html)
+  changed: [web1] => (item=/var/www/html/assets)
+  ... то же на db1 и web2
+
+Переменная цикла по умолчанию называется item. Дальше три детали,
+ради которых стоит использовать loop_control.
+
+label ЗАМЕНЯЕТ ТО, ЧТО ПЕЧАТАЕТСЯ В СКОБКАХ. Без него в строке
+(item={...}) печатался бы весь словарь и вывод было бы не читать.
+
+index_var ДАЁТ НОМЕР ИТЕРАЦИИ. Переменная dir_number живёт только
+внутри своего цикла, поэтому в файле у каждой задачи с index_var
+свой цикл.
+
+pause ДЕЛАЕТ ПАУЗУ МЕЖДУ ИТЕРАЦИЯМИ. В учебном стенде она не нужна:
+здесь она стоит одну секунду, чтобы параметр был виден в выводе.
+В работе пауза нужна, когда цикл обращается к внешней системе,
+которая ограничивает частоту запросов.
+
+ПОЧЕМУ DICT2ITEMS, А НЕ СПИСОК СЛОВАРЕЙ: словарь удобно читать
+и править — видно, что каталогу соответствует право. dict2items
+превращает его в список пар key и value, понятный циклу.
+
+ЧЕГО НЕ ДЕЛАТЬ: не переходите на loop там, где модуль сам принимает
+список. apt, dnf и package ставят список имён одной операцией —
+это быстрее цикла. Цикл нужен, когда на каждой итерации делается
+что-то ещё: разные права, разные владельцы, разные каталоги.
+
+Последняя задача — вложенный цикл. Фильтр product берёт два списка
+и возвращает все пары «первый со вторым»: три каталога на два файла
+дают шесть пар, и в цикле они приходят как item.0 и item.1.
+
+ПОЧЕМУ ИМЕННО ТАК: вложенный цикл в Ansible — это один loop
+по произведению списков, второго уровня вложенности нет. Цикл из трёх
+уровней невозможно ни читать, ни отлаживать: если он понадобился,
+данные стоит переписать.
+
+
+=========================================================================
+ШАГ 8. UNTIL, RETRIES И DELAY: ДОЖДАТЬСЯ ГОТОВНОСТИ СЛУЖБЫ
+=========================================================================
+
+Служба запускается не мгновенно: процессу нужно время, чтобы открыть
+порт. Плейбук, который сразу обратится к порту, получит отказ —
+не потому, что что-то сломано, а потому, что он поторопился. Для
+этого есть until:
+
+  until     — условие, при котором повторы прекращаются;
+  retries   — сколько раз пробовать (по умолчанию 3);
+  delay     — сколько секунд ждать между попытками.
+
+Файл 05_until.yml:
+
+  # 05_until.yml — шаг 8 практики 7: ожидание готовности службы
+  # через until, retries и delay.
+
+  ---
+  - name: Дождаться готовности веб-сервера
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    tasks:
+      - name: Подключить переменные семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+
+      - name: Запустить и включить веб-сервер
+        ansible.builtin.service:
+          name: "{{ web_service }}"
+          state: started
+          enabled: true
+
+      - name: Дождаться, пока systemd считает службу активной
+        ansible.builtin.command:
+          cmd: "systemctl is-active {{ web_service }}"
+        register: service_state
+        changed_when: false
+        until: service_state.stdout == "active"
+        # То же условие через код возврата: until: service_state.rc == 0
+        retries: 10
+        delay: 3
+
+      - name: Дождаться, пока порт 80 начнёт слушаться
+        ansible.builtin.command:
+          cmd: ss -ltn
+        register: listen_ports
+        changed_when: false
+        until: listen_ports.stdout is search(':80 ')
+        retries: 10
+        delay: 3
+
+Запускаем:
+
+  ansible-playbook 05_until.yml
+
+  TASK [Дождаться, пока systemd считает службу активной]
+  ok: [db1]
+  ok: [web1]
+  ok: [web2]
+
+Если служба поднимается медленнее, чем длится первая попытка, Ansible
+показывает повторы:
+
+  FAILED - RETRYING: [web1]: Дождаться, пока systemd считает службу активной (9 retries left).
+
+RETRYING — не ошибка: задача не упала, она ждёт. Ошибкой станет
+только исчерпание попыток:
+
+  fatal: [web1]: FAILED! => {"attempts": 10, "changed": false, "msg": "non-zero return code", "rc": 3, "stdout": "activating", ...}
+
+Теперь про само условие. Здесь была ошибка в прежней версии курса:
+
+  # так было в прежней версии курса
+  until: output.stdout.find("ZZZZ") == false
+
+Метод find возвращает не «истину или ложь», а число: -1, если строка
+не найдена, и номер позиции, если найдена. В Python ноль — это ложь,
+а единица — истина: 0 == false даёт True. Поэтому условие выше
+означает не «пока в тексте нет ZZZZ», а «пока ZZZZ стоит в самом
+начале текста». Как только строка окажется в другом месте (например,
+во второй строке журнала), find вернёт 5, сравнение 5 == false даст
+ложь, и повторы пойдут до самого конца.
+
+ИСПРАВЛЕНО: в прежней версии курса пример казался рабочим случайно:
+строка ZZZZ действительно оказывалась в начале вывода. Стоило
+поменять команду, и логика ломалась. Правильных записей две:
+
+  until: listen_ports.stdout is search(':80 ')   # поиск подстроки
+  until: service_state.rc == 0                   # проверка кода возврата
+
+Тест search возвращает настоящую истину или ложь, а rc не зависит
+от того, как оформлен вывод команды.
+
+ПОЧЕМУ ИМЕННО ТАК: retries и delay считают не «на всякий случай»,
+а по времени. При retries: 10 и delay: 3 плейбук может простоять
+на одном узле тридцать секунд и всё равно упасть. Считайте worst
+case — это время, которое узел и один fork будут заняты.
+
+ЧЕГО НЕ ДЕЛАТЬ: не ставьте delay: 30 и retries: 20 «чтобы наверняка».
+Лучше проверять чаще и падать раньше: delay: 2, retries: 15 — то же
+время ожидания, но отказ виден быстрее.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: until нужен после каждого действия, результат
+которого проявляется не сразу: запуск службы, перезагрузка узла,
+миграция базы, регистрация в кластере. Без until плейбуки становятся
+набором sleep, вставленных наугад.
+
+
+=========================================================================
+ШАГ 9. ОБРАБОТЧИКИ: NOTIFY, LISTEN И ПОРЯДОК ВЫПОЛНЕНИЯ
+=========================================================================
+
+Обработчик (handler) выполняется не тогда, когда до него дошла
+очередь, а тогда, когда его уведомили ключом notify. Смысл простой:
+перезапускать службу нужно только при изменении конфигурации.
+
+  # 06_handlers_tags.yml — шаги 9–10 практики 7.
+  # Итоговый плейбук практики: оба семейства, обработчики
+  # с listen и теги. Второй прогон даёт changed=0.
+
+  ---
+  - name: Итоговый веб-сервер для Ubuntu и Rocky Linux
+    hosts: web:db
+    become: true
+    gather_facts: true
+
+    vars:
+      site_title: "Стенд курса Ansible"
+
+    handlers:
+      - name: Перезапустить веб-сервер
+        ansible.builtin.service:
+          name: "{{ web_service }}"
+          state: restarted
+        listen: "перезапустить веб-сервер"
+
+      - name: Проверить, что служба отвечает
+        ansible.builtin.command:
+          cmd: "systemctl is-active {{ web_service }}"
+        changed_when: false
+        listen: "перезапустить веб-сервер"
+
+    tasks:
+      - name: Подключить переменные семейства ОС
+        ansible.builtin.include_vars:
+          file: "vars/{{ ansible_os_family }}.yml"
+        tags: always
+
+      - name: Установить веб-сервер
+        ansible.builtin.package:
+          name: "{{ web_package }}"
+          state: present
+        tags: install
+
+      - name: Положить главную страницу сайта
+        ansible.builtin.copy:
+          content: "<h1>{{ site_title }}: {{ inventory_hostname }}</h1>\n"
+          dest: "{{ web_root }}/index.html"
+          owner: root
+          group: root
+          mode: "0644"
+        notify:
+          - "перезапустить веб-сервер"
+          - Проверить, что служба отвечает
+        tags: config
+
+      - name: Запустить и включить веб-сервер
+        ansible.builtin.service:
+          name: "{{ web_service }}"
+          state: started
+          enabled: true
+        tags: service
+
+Здесь три приёма.
+
+ПЕРВЫЙ: НЕСКОЛЬКО УВЕДОМЛЕНИЙ. Задача копирования уведомляет двумя
+строками: тему «перезапустить веб-сервер» и обработчик «Проверить,
+что служба отвечает». Обработчики выполняются в том порядке,
+в котором описаны в разделе handlers, а не в порядке уведомления.
+
+ВТОРОЙ: LISTEN. Обработчик можно уведомлять не по имени, а по теме.
+Тема «перезапустить веб-сервер» указана у двух обработчиков, поэтому
+одно уведомление запускает оба. Это удобно, когда обработчик
+переименовали: имя поменялось, а темы в notify остались.
+
+ТРЕТИЙ: HANDLER ВЫПОЛНЯЕТСЯ ОДИН РАЗ. Сколько бы задач его ни
+уведомили, он выполнится один раз и в конце play. Уведомление
+по имени и по теме в одну и ту же задачу тоже даёт один запуск.
+
+Запускаем первый раз:
+
+  ansible-playbook 06_handlers_tags.yml
+
+  TASK [Положить главную страницу сайта]
+  changed: [db1]
+  changed: [web1]
+
+  RUNNING HANDLER [Перезапустить веб-сервер]
+  changed: [db1]
+  changed: [web1]
+
+  RUNNING HANDLER [Проверить, что служба отвечает]
+  ok: [db1]
+  ok: [web1]
+
+  PLAY RECAP
+  db1    : ok=7    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+  web1   : ok=7    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+Второй прогон:
+
+  ansible-playbook 06_handlers_tags.yml
+
+  TASK [Положить главную страницу сайта]
+  ok: [db1]
+  ok: [web1]
+
+  PLAY RECAP
+  db1    : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+  web1   : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+changed=0, и обработчики во втором прогоне не выполнялись: их никто
+не уведомил, потому что файл не изменился.
+
+ПОЧЕМУ ИМЕННО ТАК: «один раз и в конце play» — это экономия
+и предсказуемость. Если бы служба перезапускалась после каждой
+задачи, десять изменённых файлов дали бы десять перезапусков.
+
+ВАЖНО: имя обработчика не должно зависеть от переменных узла. Если
+в имени стоит {{ web_service }}, Ansible предупредит, что имя
+непригодно: у каждой машины оно своё. Имя обработчика статичное,
+а {{ web_service }} ставьте в аргументы задачи — как в файле выше.
+
+
+=========================================================================
+ШАГ 10. ТЕГИ: ЗАПУСТИТЬ ЧАСТЬ ПЛЕЙБУКА
+=========================================================================
+
+Тег — метка на задаче. По меткам запускают не весь плейбук, а нужную
+часть. В итоговом файле четыре тега: always, install, config,
+service. Тег always означает «выполнять всегда» и спасает, когда
+от тега зависит переменная: без него задача include_vars не попала бы
+в запуск с --tags config, и копирование упало бы на {{ web_root }}.
+
+  ansible-playbook --list-tags 06_handlers_tags.yml
+  playbook: 06_handlers_tags.yml
+
+    play #1 (web:db): Итоговый веб-сервер для Ubuntu и Rocky Linux   TAGS: []
+        TASK TAGS: [always, config, install, service]
+
+  ansible-playbook --tags install 06_handlers_tags.yml
+  PLAY RECAP
+  db1    : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+С ключом --tags install выполнились только задачи с тегом install
+и always: три вместо пяти. Ключ --skip-tags config делает обратное —
+выполняет всё, кроме задач с этим тегом. Тегов у задачи может быть
+несколько: tags: [install, config].
+
+ПОЧЕМУ ИМЕННО ТАК: имена тегов — часть интерфейса плейбука, как
+имена задач. Тег packages или databases понятен с первого взгляда,
+тег test1 через месяц не значит ничего. Держите три-пять тегов
+на плейбук.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: теги нужны при разборе поломки. Когда упала одна
+задача на одной машине, запуск --tags config --limit web1 --check
+занимает секунды, а полный прогон по парку — минуты.
+
+
+=========================================================================
+ШАГ 11. ИТОГ: ОДИН ПЛЕЙБУК НА ДВУХ СЕМЕЙСТВАХ
+=========================================================================
+
+Проверим то, ради чего всё делалось. В итоговом файле нет ни одной
+проверки семейства, но он работает и на Ubuntu, и на Rocky Linux:
+имена приходят из vars/Debian.yml и vars/RedHat.yml. В отчёте
+третьего прогона нет ни failed, ни skipped, ни changed.
+
+  curl -s http://10.0.2.11/
+  <h1>Стенд курса Ansible: web1</h1>
+
+  curl -s http://10.0.2.13/
+  <h1>Стенд курса Ansible: db1</h1>
+
+Одинаковые страницы на разных семействах — результат, а не совпадение:
+задача одна, а данные для неё разные.
+
+ПОЧЕМУ ИМЕННО ТАК: в итоговом файле нет ни одного when — и это
+правильно. when остаётся для случаев, когда различие нельзя описать
+данными: разный набор служб, разное поведение, разные модули. Всё,
+что сводится к «другое имя» или «другой путь», выносится
+в переменные. Тогда новый дистрибутив добавляется одним файлом
+в vars/, а не правкой задач.
+
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+ПРОБЛЕМА: conditional statements should not include jinja2 templating delimiters
+
+  [WARNING]: conditional statements should not include jinja2 templating delimiters such as {{ }} or {% %}. Found: {{ ansible_os_family }} == "Debian"
+
+Так отвечали версии ansible-core до 2.19. В 2.19 та же ошибка выглядит
+иначе: если всё значение обёрнуто в {{ }}, будет предупреждение
+Conditionals should not be surrounded by templating delimiters,
+а если скобки стоят внутри выражения — отказ с Syntax error
+in expression. Причина одна: when — это выражение, а не шаблон.
+Проверяйте по порядку:
+
+  1. Найдите строку с when и уберите из неё {{ }}:
+     when: ansible_os_family == "Debian"
+  2. Поищите остальные случаи: grep -n "when:.*{{" *.yml
+  3. Запустите --syntax-check: ошибка в условии видна только
+     при выполнении, синтаксис YAML при этом верный.
+
+ПРОБЛЕМА: Conditional result was derived from value of type 'str'
+
+  fatal: [web1]: FAILED! => {"msg": "Conditional result (True) was derived from value of type 'str' at '<источник переменной>'. Conditionals must have a boolean result."}
+
+Проверка из ansible-core 2.19: результат условия обязан быть
+логическим. Строка, число, непустой словарь — уже не условие, даже
+если значение похоже на истину. Порядок проверки:
+
+  1. Найдите условие без сравнения: when: web_port, when: site_title,
+     when: httpd_check.stdout.
+  2. Допишите сравнение или тест: when: web_port > 0,
+     when: site_title | length > 0, when: флаг is truthy.
+  3. Чтобы увидеть все такие места сразу, включите
+     ALLOW_BROKEN_CONDITIONALS=1 и исправьте их по одному.
+
+ПРОБЛЕМА: 'item' is undefined
+
+  fatal: [web1]: FAILED! => {"msg": "The task includes an option with an undefined variable. The error was: 'item' is undefined"}
+
+Переменная item существует только внутри цикла. Порядок проверки:
+
+  1. Есть ли у задачи ключ loop? Проверьте отступ: loop должен быть
+     на одном уровне с name, а не внутри модуля.
+  2. Посмотрите, не обращается ли к item другая задача — например,
+     из блока rescue, который выполняется вне цикла.
+  3. Если переменную цикла переименовали через loop_var,
+     обращаться нужно по новому имени.
+
+ПРОБЛЕМА: ERROR! The requested handler 'Перезапустить веб-сервер' was not found
+
+  ERROR! The requested handler 'Перезапустить веб-сервер' was not found in either the main handlers list nor in the listening handlers list
+
+notify ссылается на обработчик, которого нет. Ansible сравнивает
+строку notify с именами обработчиков и темами listen. Проверяйте:
+
+  1. Раздел handlers в том же play: обработчики действуют в пределах
+     своего play и из другого play не видны.
+  2. Написание строки: «Перезапустить веб-сервер»
+     и «перезапустить веб-сервер» — две разные строки.
+  3. Запуск с -v: в выводе будет строка NOTIFIED HANDLER с именем
+     того обработчика, который получил уведомление.
+
+ПРОБЛЕМА: ERROR! 'ignore_errors' is not a valid attribute for a Play
+
+  ERROR! 'ignore_errors' is not a valid attribute for a Play
+
+Так было в прежней версии курса: ключ стоял на уровне play, а не
+задачи. Ansible разбирает ключи play по своему списку, и незнакомый
+ключ останавливает запуск до выполнения задач. Проверяйте:
+
+  1. Строку и колонку из текста ошибки — там точное место.
+  2. Отступ ключа: если он на уровне hosts, play или become,
+     он относится ко всему play.
+  3. Перенесите ключ внутрь задачи, к которой он относится.
+
+ИСПРАВЛЕНО: в прежней версии курса ignore_errors: yes стоял именно
+на уровне play. В новой версии этого ключа в файлах нет намеренно:
+отказ должен быть виден в отчёте, пока мы не решили обратное
+осознанно.
+
+ПРОБЛЕМА: задача пропущена на всех хостах (одни строки skipping)
+
+  TASK [Установить apache2 на Ubuntu]
+  skipping: [db1]
+  skipping: [web1]
+  skipping: [web2]
+
+Ни одна машина не выполнила задачу — значит, условие ложно для всех.
+Порядок проверки:
+
+  1. Подставьте фактические значения: ansible web1 -m
+     ansible.builtin.setup -a "filter=ansible_os_family". Проверьте
+     и написание: Debian и debian — разные строки.
+  2. Посмотрите, собираются ли факты. При gather_facts: false факта
+     ansible_os_family нет, и условие по нему всегда ложно. Это
+     самая частая причина.
+  3. Запустите с -vvv и найдите строку с вычисленным условием:
+     в ней видно, какие значения получились.
+
+ПРОБЛЕМА: обработчик выполнился дважды
+
+  RUNNING HANDLER [Перезапустить веб-сервер]
+  changed: [web1]
+  ...
+  RUNNING HANDLER [Перезапустить веб-сервер]
+  changed: [web1]
+
+Один и тот же обработчик в выводе встречается два раза. Причины
+и порядок проверки:
+
+  1. В play есть meta: flush_handlers, а после него задача снова
+     изменила тот же файл: обработчик выполнился на flush и в конце
+     play. Посмотрите, где стоит flush_handlers.
+  2. Обработчиков с одинаковым действием два, и уведомляются оба:
+     так было в прежней версии курса, где для двух семейств завели
+     «Restart Apache Debian» и «Restart Apache CentOS».
+  3. Плейбук состоит из двух play, и в каждом меняется один и тот же
+     файл: обработчики выполняются по разу на play.
+
+ИСПРАВЛЕНО: в прежней версии курса в одной задаче стояли два ключа
+notify подряд, и оставался только последний:
+
+  notify: Restart Apache Debian
+  notify: Restart Apache CentOS
+
+YAML считает такой словарь допустимым, первый обработчик теряется,
+а загрузчик сообщает о дублирующемся ключе примерно так:
+
+  Found duplicate mapping key 'notify' ...
+  Using last defined value only
+
+Но это одна строка предупреждения в общем выводе, и её легко
+пропустить. Если дубликаты ключей нужно ловить жёстко, настройку
+duplicate_dict_key переводят в error — разбор тогда падает
+с ошибкой. Верный способ уведомить два обработчика — список:
+
+  notify:
+    - "перезапустить веб-сервер"
+    - Проверить, что служба отвечает
+
+Скрипт tools/validate_files.py проверяет файлы курса именно
+на повторяющиеся ключи, чтобы такая ошибка не вернулась.
+
+ПРОБЛЕМА: until не дождался и задача упала
+
+  FAILED - RETRYING: [web1]: Дождаться, пока systemd считает службу активной (9 retries left).
+  ...
+  fatal: [web1]: FAILED! => {"attempts": 10, "changed": false, "msg": "non-zero return code", "rc": 3, "stdout": "activating", ...}
+
+Попытки исчерпаны, условие так и не стало истинным. Проверяйте:
+
+  1. Команду из задачи руками: ssh engineer@web1 "systemctl is-active
+     apache2". Если ответ activating, служба в цикле перезапуска —
+     смотрите journalctl -u apache2 -n 30 --no-pager.
+  2. Условие: сравниваете ли вы то поле — stdout, а не stdout_lines
+     или rc. Ошибка с find из шага 8 выглядит именно так.
+  3. Время: retries умножить на delay должно быть больше, чем нужно
+     службе на старт в худшем случае.
+
+
+=========================================================================
+ПРОВЕРКА РЕЗУЛЬТАТА
+=========================================================================
+
+Практика выполнена, если выполняются все пункты.
+
+1. Все шесть плейбуков разбираются:
+
+     cd ~/ansible-lab
+     ansible-playbook --syntax-check 01_when.yml 02_two_families.yml \
+         03_blocks.yml 04_loops.yml 05_until.yml 06_handlers_tags.yml
+
+2. Условия работают и видно, что пропускается:
+
+     ansible-playbook 01_when.yml
+     db1    : ok=7    changed=0    ... skipped=1 ...
+
+   На web1 пропущена задача с отрицанием, на db1 — по группе.
+
+3. Каждое семейство получило свой веб-сервер:
+
+     ansible db1 -b -m ansible.builtin.command -a "systemctl is-active httpd"
+     db1 | CHANGED | rc=0 >>
+     active
+
+     ansible web1 -b -m ansible.builtin.command -a "systemctl is-active apache2"
+     web1 | CHANGED | rc=0 >>
+     active
+
+4. Отказ обрабатывается, а не роняет play:
+
+     ansible-playbook 03_blocks.yml
+     db1    : ok=7    ... failed=0    skipped=2    rescued=1 ...
+
+   В колонке rescued единица, в failed ноль.
+
+5. Готовность службы дожидается, а не угадывается:
+
+     ansible-playbook 05_until.yml
+     TASK [Дождаться, пока порт 80 начнёт слушаться]
+     ok: [db1]
+     ok: [web1]
+     ok: [web2]
+
+6. Итоговый плейбук идемпотентен:
+
+     ansible-playbook 06_handlers_tags.yml
+     ansible-playbook 06_handlers_tags.yml
+
+   Второй прогон: changed=0 на всех трёх машинах.
+
+7. Обработчики запускаются по изменению, а не всегда:
+
+     ansible-playbook 06_handlers_tags.yml -v | grep 'RUNNING HANDLER'
+
+   После правки страницы строки RUNNING HANDLER есть, во втором
+   прогоне их нет.
+
+8. Теги видны и работают:
+
+     ansible-playbook --list-tags 06_handlers_tags.yml
+     ansible-playbook --tags install 06_handlers_tags.yml
+
+9. Страницы открываются с управляющей машины:
+
+     curl -s -o /dev/null -w '%{http_code}\n' http://10.0.2.11/
+     200
+     curl -s -o /dev/null -w '%{http_code}\n' http://10.0.2.13/
+     200
+
+УБИРАТЬ НИЧЕГО НЕ НУЖНО: apache2 на web1 и web2, httpd на db1
+и файлы страниц остаются — они нужны в практиках 8, 9 и 10.
+Каталоги /var/www/html/assets и upload тоже оставьте: следующий
+прогон 04_loops.yml не найдёт в них изменений.
+
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Далее в курсе:
+
+  * практика 8 — файлы, права и текстовые конфигурации: та же
+    страница и тот же конфиг, но теперь с правами, backup,
+    lineinfile и blockinfile; условия из этой практики там
+    используются, чтобы не трогать чужой файл;
+  * практика 9 — административные задачи: пакеты, пользователи,
+    службы и межсетевой экран. ufw и firewalld из шага 1 разбираются
+    там как следует, и снова на двух семействах;
+  * практика 10 — роли: всё, что мы написали в файлах 05_until.yml
+    и 06_handlers_tags.yml, станет ролью web_admin; переменные
+    по семействам переедут в vars/ роли, обработчики — в tasks
+    и handlers роли;
+  * практика 12 — Jinja2 для настоящих конфигов: шаблоны с циклами
+    и условиями внутри файла, а не в задачах;
+  * практика 14 — сложные проекты: serial, delegate_to, include_tasks
+    и теги уже на весь проект.
+
+ПЕРЕД ПЕРЕХОДОМ уберите за собой: убирать нечего, стенд остаётся
+в рабочем состоянии. Проверьте только, что он отвечает:
+
+  ansible all -m ansible.builtin.ping
+
+Три строки SUCCESS и ни одной UNREACHABLE. Если стенд испорчен,
+верните его из снимка практики 1: в практике 8 мы будем намеренно
+ломать конфигурацию sshd.
+
+

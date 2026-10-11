@@ -1,0 +1,30 @@
+---
+# Практика 12, шаг 13: прочитать файл с узла и сравнить с шаблоном.
+# Запуск: ansible-playbook 05_slurp.yml
+# Плейбук ничего не меняет: changed=0 должен быть и в первый раз.
+
+- name: "Прочитать /etc/motd с узла и сравнить с шаблоном"
+  hosts: web1
+  become: true
+  tasks:
+    - name: "Прочитать файл с узла модулем slurp"
+      ansible.builtin.slurp:
+        src: /etc/motd
+      register: motd_remote
+
+    - name: "Показать размер и первую строку прочитанного файла"
+      ansible.builtin.debug:
+        msg: >-
+          Прочитано {{ motd_remote.content | b64decode | length }} символов;
+          первая строка: {{ (motd_remote.content | b64decode).splitlines() | first }}
+
+    - name: "Собрать тот же файл из шаблона на управляющей машине"
+      ansible.builtin.set_fact:
+        motd_rendered: "{{ lookup('template', playbook_dir ~ '/templates/motd.j2') }}"
+
+    - name: "Сравнить файл на узле с тем, что даёт шаблон"
+      ansible.builtin.assert:
+        that:
+          - "(motd_remote.content | b64decode | trim) == (motd_rendered | trim)"
+        fail_msg: "Файл на узле отличается от шаблона: кто-то правил /etc/motd руками."
+        success_msg: "Файл на узле совпадает с шаблоном motd.j2."

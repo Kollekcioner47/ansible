@@ -1,0 +1,1122 @@
+Практика 10. Роли и итоговая работа.
+
+ЭТА ПРАКТИКА — ИТОГ ТРЁХДНЕВНОГО ТРЕКА. Всё, что делалось
+по частям в практиках 4–9, собирается здесь в одно: плейбук
+практики 7 становится ролью web_admin, а роль — проектом, который
+запускается одной командой на четырёх машинах.
+
+
+=========================================================================
+ЧТО МЫ СДЕЛАЕМ
+=========================================================================
+
+Разберём, во что превращается плейбук, когда его копируют под
+каждый случай, и как роль убирает эти копии. Разберём структуру
+роли и разницу между defaults и vars. Создадим роль командой
+ansible-galaxy role init, перенесём в неё плейбук практики 7
+и разберём способы вызова роли. Соберём итоговый проект, прогоним
+его на web1, web2 и db1, добьёмся changed=0 и проверим работу
+по критериям итоговой работы трёхдневного трека.
+
+
+=========================================================================
+ЧТО ПОНАДОБИТСЯ
+=========================================================================
+
+СТЕНД ИЗ ПРАКТИК 1–9. Четыре машины собраны, вход по ключу
+работает, ansible.cfg и inventory.ini лежат в ~/ansible-lab:
+
+  control  10.0.2.5   — управляющая машина, здесь мы всё выполняем
+  web1     10.0.2.11  — Ubuntu 26.04 LTS
+  web2     10.0.2.12  — Ubuntu 26.04 LTS
+  db1      10.0.2.13  — Rocky Linux 10
+
+ЧТО ДОЛЖНО БЫТЬ ГОТОВО ЗАРАНЕЕ:
+
+  * Ansible установлен в ~/ansible-venv (практика 1);
+  * коллекции ansible.posix и community.general установлены: роль
+    ставит community.general.ufw и ansible.posix.firewalld;
+  * в инвентаре есть группы web, db, linux, debian и redhat
+    (практика 2);
+  * плейбук практики 7 мог уже прогоняться: apache2, httpd
+    и открытые порты роли не мешают.
+
+ФАЙЛЫ ИЗ КАТАЛОГА КУРСА лежат в files/10_roles — это готовый
+проект целиком; каждый файл напечатан в шаге, где разбирается.
+
+ВРЕМЯ: четыре академических часа.
+
+ЕСЛИ ЧЕТВЁРТОЙ МАШИНЫ НЕТ. Без db1 не проверить главный критерий
+итоговой работы — работу на втором семействе ОС.
+
+
+#########################################################################
+ЧАСТЬ 1. ОТ ПЛЕЙБУКА К РОЛИ
+#########################################################################
+
+
+=========================================================================
+ШАГ 1. ЗАЧЕМ РОЛИ: ВОСЕМЬ ЗАДАЧ, КОТОРЫЕ КОПИРУЮТ
+=========================================================================
+
+Плейбук практики 7 работает на двух семействах ОС. Сокращённо он
+выглядит так (целиком —
+files/07_conditions_loops/02_two_families.yml):
+
+  - name: Веб-сервер на Ubuntu и Rocky Linux двумя задачами с when
+    hosts: web:db
+    tasks:
+      - name: Установить apache2 на Ubuntu
+        ansible.builtin.apt:
+          name: apache2
+        when: ansible_os_family == "Debian"
+
+      - name: Установить httpd на Rocky Linux
+        ansible.builtin.dnf:
+          name: httpd
+        when: ansible_os_family == "RedHat"
+
+      ...и ещё шесть задач: страница, служба, межсетевой экран.
+
+Теперь нужно развернуть сайт ещё на двух машинах — файл копируют:
+cp 02_two_families.yml 05_new_web.yml, потом правят hosts. Через
+месяц файлов пять, и они разошлись: одна задача живёт в пяти
+местах, страница где-то кладётся модулем copy, а где-то template.
+Взять «веб-сервер с сайтом» в другой проект нечего: копировать
+придётся весь файл и вычищать из него наш стенд.
+
+РОЛЬ (role) — это задачи, шаблоны, файлы и переменные, сложенные
+в каталог с заранее известной структурой. Ansible знает эту
+структуру, поэтому роль достаточно назвать:
+
+  - name: Веб-сервер и сайт на узлах стенда
+    hosts: linux
+    become: true
+    roles:
+      - role: web_admin
+
+Восемь задач, шаблон и обработчик превратились в четыре строки,
+а главное — файл теперь один, и он же переиспользуемый.
+
+ПОЧЕМУ ИМЕННО ТАК: есть способ проще — вынести задачи в файл
+и подключить ключом include_tasks. Роль даёт то, чего у него нет:
+свои переменные с двумя уровнями приоритета (defaults и vars),
+свои шаблоны и файлы без указания пути (src: index.j2) и описание
+в meta/main.yml с автором, лицензией и зависимостями.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: роль — единица переиспользования: её пишут
+один раз, версионируют и применяют к сотне машин.
+
+
+=========================================================================
+ШАГ 2. СТРУКТУРА РОЛИ: ЧТО КЛАДЁТСЯ КУДА
+=========================================================================
+
+Имена подкаталогов роли — это интерфейс: Ansible ищет задачи
+только в tasks/main.yml, шаблоны — только в templates/, файлы —
+только в files/.
+
+  roles/web_admin/
+  ├── tasks/main.yml        задачи роли, выполняются по порядку
+  ├── handlers/main.yml     обработчики: перезапуск службы
+  ├── defaults/main.yml     переменные по умолчанию
+  ├── vars/main.yml         переменные, которые роль фиксирует
+  ├── files/                файлы роли для модуля copy (style.css)
+  ├── templates/index.j2    шаблоны Jinja2 для модуля template
+  ├── meta/main.yml         автор, лицензия, платформы, зависимости
+  └── README.md             описание роли словами
+
+Что кладётся куда:
+
+  * tasks/main.yml — единственное место, откуда Ansible берёт
+    задачи роли: нет файла — роль вызовется и ничего не сделает,
+    без единой ошибки;
+  * handlers/main.yml — обработчики: без него notify из задачи
+    не сработает и прогон закончится ошибкой;
+  * defaults/main.yml и vars/main.yml — переменные роли (шаг 3);
+  * templates/ — шаблоны Jinja2; files/ — файлы, которые модуль
+    copy отдаёт на узел байт в байт, без подстановок;
+  * meta/main.yml — описание роли и раздел dependencies.
+
+ПОЧЕМУ ИМЕННО ТАК: файл из templates/ сначала рендерится Jinja2
+на управляющей машине и только потом уходит на узел. Отсюда
+правило: есть в файле {{ }} — он шаблон и лежит в templates/;
+нет подстановок — он файл и лежит в files/. Шаблон, положенный
+в files/, — самая частая ошибка при переносе плейбука в роль.
+
+ВАЖНО: дополнительных каталогов Ansible не знает. Файл
+tasks/install.yml сам не подключится: его вызывают из tasks/main.yml
+ключами include_tasks или import_tasks (практика 14).
+
+
+=========================================================================
+ШАГ 3. DEFAULTS ПРОТИВ VARS: ЧТО ПЕРЕОПРЕДЕЛЯЮТ, А ЧТО ФИКСИРУЮТ
+=========================================================================
+
+У роли два файла переменных, и различаются они приоритетом:
+
+  * defaults/main.yml — значения, которые ПРЕДПОЛАГАЕТСЯ
+    ПЕРЕОПРЕДЕЛЯТЬ. Приоритет самый низкий: play, group_vars,
+    host_vars, параметры роли и --extra-vars сильнее;
+  * vars/main.yml — значения, которые роль ФИКСИРУЕТ. Приоритет
+    выше, чем у play, group_vars и host_vars; сильнее их только
+    параметры роли и --extra-vars.
+
+У нас в defaults лежат порт сайта, каталог сайта и заголовок
+страницы — то, что вызывающий вправе поменять. В vars лежат имена
+пакетов и служб: apache2 на Ubuntu и httpd на Rocky Linux — это
+не «значение по умолчанию», а факт операционной системы.
+
+ПРОВЕРКА: поставьте в group_vars/web.yml строку
+web_admin_index_file: web.html — роль положит страницу в файл
+web.html, потому что defaults переопределяются. Так и проверяют,
+что роль берёт значение именно из group_vars, а не из своего
+defaults: имя файла видно на узле, и его легко сверить с ожидаемым.
+Порт сайта для такой проверки не годится: у роли web_admin рабочий
+порт 80, а 8080 занят nginx из практик 12 и 15. После проверки
+строку уберите: с ней роль оставит на узле web.html, а не index.html.
+А переопределить тем же способом web_admin_family_settings не выйдет:
+переменная из vars сильнее group_vars.
+
+ИСПРАВЛЕНО: в прежней версии курса эти два файла были объяснены
+наоборот — будто в vars лежат «значения по умолчанию, которые
+можно переопределить». Переменная, положенная в vars «чтобы
+переопределялась», молча не переопределяется, а ошибки нет.
+
+ЧЕГО НЕ ДЕЛАТЬ: не храните в vars роли секреты: значение из vars
+нельзя переопределить ни group_vars, ни host_vars, поэтому секрет
+придётся править в самой роли, общей для всех машин. Секреты
+живут в Vault (практика 5).
+
+
+=========================================================================
+ШАГ 4. СОЗДАЁМ РОЛЬ: ANSIBLE-GALAXY ROLE INIT
+=========================================================================
+
+Скелет роли создаёт сам Ansible:
+
+  cd ~/ansible-lab/10_roles
+  ansible-galaxy role init roles/web_admin
+  - Role roles/web_admin was created successfully
+
+Появилось: README.md, defaults/, files/, handlers/, meta/, tasks/,
+templates/, tests/ и vars/ — каталоги с файлами-заглушками.
+
+ЧТО ЗАПОЛНЯЕТСЯ, А ЧТО УДАЛЯЕТСЯ:
+
+  * tasks, handlers, defaults, vars и meta — заполняем своим
+    содержимым;
+  * templates/ и files/ — пустые каталоги: кладём index.j2
+    и style.css;
+  * README.md — переписываем: заготовка Galaxy состоит
+    из разделов-заглушек;
+  * tests/ — удаляем (rm -rf tests): каталог остался от времён,
+    когда роли проверяли запуском tests/test.yml в Travis CI.
+    Сегодня для этого есть molecule (практика 16).
+
+ВАЖНО: путь roles/web_admin выбран не случайно. Ansible ищет роли
+в каталоге roles рядом с плейбуком, поэтому site.yml сможет
+написать просто role: web_admin. Список мест поиска меняется
+переменной roles_path (практика 15).
+
+
+=========================================================================
+ШАГ 5. ПЕРЕНОСИМ ПЛЕЙБУК ПРАКТИКИ 7 В РОЛЬ: ЗАДАЧИ
+=========================================================================
+
+Файл roles/web_admin/tasks/main.yml целиком:
+
+  ---
+  # Задачи роли web_admin: веб-сервер и учебная страница сайта.
+  # Порядок повторяет плейбук практики 7: пакет, страница, служба,
+  # межсетевой экран. Имена пакетов, служб и межсетевых экранов
+  # берутся из vars/main.yml по факту ansible_os_family.
+
+  - name: Проверить, что семейство ОС поддерживается ролью
+    ansible.builtin.assert:
+      that:
+        - ansible_os_family in web_admin_supported_families
+      fail_msg: >-
+        Роль web_admin не умеет работать на семействе
+        {{ ansible_os_family }}: поддержаны
+        {{ web_admin_supported_families | join(', ') }}.
+      success_msg: "Семейство {{ ansible_os_family }} поддержано"
+      quiet: true
+
+  - name: Взять имена пакетов и служб своего семейства ОС
+    ansible.builtin.set_fact:
+      web_admin_package: "{{ web_admin_family_settings[ansible_os_family].package }}"
+      web_admin_service: "{{ web_admin_family_settings[ansible_os_family].service }}"
+      web_admin_firewall_package: "{{ web_admin_family_settings[ansible_os_family].firewall_package }}"
+
+  - name: Установить веб-сервер
+    ansible.builtin.package:
+      name: "{{ web_admin_package }}"
+      state: present
+
+  - name: Разложить страницу сайта
+    block:
+      - name: Создать каталог сайта
+        ansible.builtin.file:
+          path: "{{ web_admin_site_root }}"
+          state: directory
+          owner: root
+          group: root
+          mode: "0755"
+
+      - name: Разложить главную страницу из шаблона
+        ansible.builtin.template:
+          src: index.j2
+          dest: "{{ web_admin_site_root }}/{{ web_admin_index_file }}"
+          owner: root
+          group: root
+          mode: "0644"
+          backup: true
+        notify:
+          - "web_admin: обновить службу"
+
+      - name: Разложить оформление страницы
+        ansible.builtin.copy:
+          src: style.css
+          dest: "{{ web_admin_site_root }}/{{ web_admin_style_file }}"
+          owner: root
+          group: root
+          mode: "0644"
+
+    when: web_admin_deploy_site | bool
+
+  - name: Включить веб-сервер и держать его запущенным
+    ansible.builtin.systemd_service:
+      name: "{{ web_admin_service }}"
+      state: "{{ web_admin_service_state }}"
+      enabled: "{{ web_admin_service_enabled }}"
+
+  - name: Установить межсетевой экран
+    ansible.builtin.package:
+      name: "{{ web_admin_firewall_package }}"
+      state: present
+
+  - name: Открыть порты на Ubuntu
+    block:
+      - name: Разрешить порт сайта и порт SSH в ufw
+        community.general.ufw:
+          rule: allow
+          port: "{{ item }}"
+          proto: tcp
+        loop:
+          - "{{ web_admin_port }}"
+          - "{{ web_admin_ssh_port }}"
+
+      - name: Включить ufw
+        community.general.ufw:
+          state: enabled
+          policy: deny
+          direction: incoming
+
+    when: ansible_os_family == "Debian"
+
+  - name: Открыть порт сайта на Rocky Linux
+    block:
+      - name: Включить firewalld
+        ansible.builtin.systemd_service:
+          name: firewalld
+          state: started
+          enabled: true
+
+      - name: Разрешить порт сайта в firewalld
+        ansible.posix.firewalld:
+          port: "{{ web_admin_port }}/tcp"
+          permanent: true
+          immediate: true
+          state: enabled
+
+    when: ansible_os_family == "RedHat"
+
+Что изменилось по сравнению с плейбуком практики 7:
+
+  * имена пакетов и служб ушли в vars/main.yml и собираются
+    задачей set_fact по факту ansible_os_family: в роли нет
+    ни одного when по семейству ОС;
+  * страница кладётся модулем template, а не copy: на каждой
+    машине она своя;
+  * в начале роли стоит ansible.builtin.assert: на незнакомом
+    семействе роль останавливается с понятным текстом.
+
+ПОЧЕМУ ИМЕННО ТАК: пакет ставит ansible.builtin.package, а не apt
+и dnf по отдельности: модуль сам выбирает менеджер пакетов
+по фактам узла (отдельные apt и dnf нужны там, где у семейства
+есть свои параметры). Страница разложена блоком с условием
+web_admin_deploy_site: одно условие на три задачи читается лучше,
+чем when в каждой; фильтр | bool нужен, потому что значение может
+прийти строкой из --extra-vars.
+
+
+=========================================================================
+ШАГ 6. ШАБЛОН И ФАЙЛЫ РОЛИ
+=========================================================================
+
+Страница сайта — шаблон, оформление — файл. Файл
+roles/web_admin/templates/index.j2:
+
+  <!DOCTYPE html>
+  <html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ web_admin_site_title }} — {{ inventory_hostname }}</title>
+    <link rel="stylesheet" href="{{ web_admin_style_file }}">
+  </head>
+  <body>
+    <h1>{{ web_admin_site_title }}</h1>
+    <p class="managed">{{ ansible_managed }}</p>
+
+    <table>
+      <tr><th>Имя машины</th><td>{{ ansible_facts['hostname'] }}</td></tr>
+      <tr><th>Адрес</th><td>{{ ansible_facts['default_ipv4']['address'] }}</td></tr>
+      <tr><th>Семейство ОС</th><td>{{ ansible_facts['os_family'] }}</td></tr>
+      <tr><th>Веб-сервер</th><td>{{ web_admin_service }}</td></tr>
+      <tr><th>Владелец машины</th><td>{{ web_admin_owner }}</td></tr>
+    </table>
+
+    <h2>Машины группы web</h2>
+    <ul>
+  {% for host in groups['web'] | sort %}
+      <li>{{ host }} — {{ hostvars[host]['ansible_host'] | default('адрес неизвестен') }}</li>
+  {% endfor %}
+    </ul>
+
+    <p>Группы этой машины: {{ group_names | sort | join(', ') }}</p>
+  </body>
+  </html>
+
+Файл style.css из каталога files/ роли:
+
+  /* style.css — оформление учебной страницы роли web_admin.
+     Подстановок Jinja2 нет: файл лежит в files/ и уходит
+     на узел как есть. */
+
+  body { margin: 0; padding: 2rem; background: #f5f7fa;
+         color: #1f2933; font-family: "DejaVu Sans", Arial, sans-serif; }
+  h1 { margin-top: 0; color: #1d4ed8; }
+  p.managed { color: #6b7280; font-size: 0.85rem; }
+  table { border-collapse: collapse; background: #ffffff; }
+  th, td { border: 1px solid #cbd5e1; padding: 0.4rem 0.8rem;
+           text-align: left; }
+
+ЗАЧЕМ ЭТО В РАБОТЕ: страница из шаблона — видимая проверка
+автоматизации: имя машины, адрес, семейство ОС и владелец
+подставляются Jinja2 на управляющей машине, поэтому index.j2
+шаблон. В style.css подстановок нет, поэтому он файл.
+
+ВАЖНО: строка {{ ansible_managed }} — метка «Ansible managed»,
+её подставляет сам Ansible. Не заменяйте её датой и временем:
+почему — разобрано в секции «Если что-то пошло не так».
+
+
+=========================================================================
+ШАГ 7. ПЕРЕМЕННЫЕ РОЛИ: DEFAULTS И VARS
+=========================================================================
+
+Значения по умолчанию — файл roles/web_admin/defaults/main.yml:
+
+  ---
+  # defaults/main.yml — значения по умолчанию роли web_admin.
+  # Приоритет у них самый низкий: play, group_vars, host_vars
+  # и --extra-vars их перекрывают.
+
+  # Разворачивать ли страницу сайта: для группы web значение
+  # переопределено в group_vars/web.yml.
+  web_admin_deploy_site: false
+
+  # Что написано на странице.
+  web_admin_site_title: "Учебный стенд курса Ansible"
+  web_admin_owner: "не назначен"
+
+  # Порт сайта и порт SSH: их открывает межсетевой экран.
+  web_admin_port: 80
+  web_admin_ssh_port: 22
+
+  # Каталог сайта и имена файлов в нём.
+  web_admin_site_root: /var/www/html
+  web_admin_index_file: index.html
+  web_admin_style_file: style.css
+
+  # Состояние службы: started — «запущена», enabled — «в автозапуске».
+  web_admin_service_state: started
+  web_admin_service_enabled: true
+
+Значения, которые роль фиксирует, — roles/web_admin/vars/main.yml:
+
+  ---
+  # vars/main.yml — значения, которые роль ФИКСИРУЕТ.
+  # Приоритет у них выше, чем у play, group_vars и host_vars:
+  # перекрыть их можно только через --extra-vars.
+
+  # Семейства ОС, с которыми роль умеет работать.
+  web_admin_supported_families:
+    - Debian
+    - RedHat
+
+  # Настройки по семействам ОС: ключ словаря — значение факта
+  # ansible_os_family, поэтому в задачах нет ветвлений.
+  web_admin_family_settings:
+    Debian:
+      package: apache2
+      service: apache2
+      firewall_package: ufw
+    RedHat:
+      package: httpd
+      service: httpd
+      firewall_package: firewalld
+
+ПРОВЕРКА: после шага 11 посмотрите, какие переменные дошли до узла:
+
+  ansible-inventory --host web1 | grep web_admin
+
+
+=========================================================================
+ШАГ 8. ОБРАБОТЧИКИ В РОЛИ: LISTEN И FLUSH_HANDLERS
+=========================================================================
+
+Файл roles/web_admin/handlers/main.yml:
+
+  ---
+  # handlers/main.yml — обработчики роли web_admin.
+  #
+  # Задачи роли уведомляют не обработчик по имени, а тему listen:
+  # у одной темы может быть несколько обработчиков, и тогда
+  # по одному notify срабатывают оба, в порядке объявления.
+  #
+  # Имя обработчика начинается с имени роли: имена обработчиков
+  # общие для всего play, и во второй роли обработчик
+  # «перезапустить веб-сервер» столкнулся бы с этим.
+  #
+  # Двоеточие входит в имя, поэтому строка взята в кавычки: без них
+  # YAML прочитал бы web_admin: как ещё один ключ словаря.
+  # В notify имя темы должно совпадать символ в символ.
+
+  - name: "web_admin: перезапустить веб-сервер"
+    ansible.builtin.systemd_service:
+      name: "{{ web_admin_service }}"
+      state: restarted
+    listen: "web_admin: обновить службу"
+
+  - name: "web_admin: проверить страницу после перезапуска"
+    ansible.builtin.uri:
+      url: "http://127.0.0.1:{{ web_admin_port }}/{{ web_admin_index_file }}"
+      status_code: 200
+      return_content: false
+    listen: "web_admin: обновить службу"
+
+ПОЧЕМУ ИМЕННО ТАК: имена обработчиков, в отличие от имён задач,
+общие для всего play. Если две роли объявят обработчик с именем
+«Перезапустить веб-сервер», notify из первой роли может запустить
+обработчик второй. Отсюда привычка делать имена уникальными,
+а тему listen — с префиксом роли.
+
+В выводе имя роли печатается дважды — один раз как контекст роли,
+второй раз как часть имени обработчика:
+
+  RUNNING HANDLER [web_admin : web_admin: перезапустить веб-сервер]
+
+ВАЖНО: обработчик срабатывает только тогда, когда задача
+действительно что-то изменила. Если шаблон не менялся, notify
+не отправляется, перезапуска нет.
+
+ЧТО ДЕЛАЕТ FLUSH_HANDLERS. Обработчики ждут конца play; если
+службу нужно перезапустить раньше, в tasks ставят
+ansible.builtin.meta: flush_handlers.
+
+
+=========================================================================
+ШАГ 9. ВЫЗОВ РОЛИ: ЧЕТЫРЕ СПОСОБА И РАЗНИЦА СТАТИКИ
+=========================================================================
+
+СПОСОБ 1. Ключ roles в play — то, что написано в нашем site.yml:
+
+  roles:
+    - role: web_admin
+
+СПОСОБ 2. Роль с параметрами: тот же ключ, запись через role
+и словарь vars. Параметры роли сильнее её defaults и vars:
+
+  roles:
+    - role: web_admin
+      vars:
+        web_admin_deploy_site: true
+
+СПОСОБ 3. when на роли: роль выполнится только на части машин:
+
+  roles:
+    - role: web_admin
+      when: ansible_os_family == "Debian"
+
+СПОСОБ 4. ansible.builtin.include_role — вызов из задач:
+
+  tasks:
+    - name: Развернуть сайт на машинах группы web
+      ansible.builtin.include_role:
+        name: web_admin
+      vars:
+        web_admin_deploy_site: true
+
+ЧЕМ СТАТИКА ОТЛИЧАЕТСЯ ОТ ДИНАМИКИ. Ключ roles, import_role
+и import_tasks разбираются при чтении плейбука: Ansible видит все
+задачи роли заранее, поэтому работают --list-tasks и теги внутри
+роли. include_role и include_tasks выполняются во время прогона,
+как обычная задача: их можно поставить под when, собрать имя роли
+из переменной, вызвать в цикле — но в --list-tasks такой роли
+не будет. Подробно — практика 14.
+
+
+=========================================================================
+ШАГ 10. META/MAIN.YML И README РОЛИ
+=========================================================================
+
+Файл roles/web_admin/meta/main.yml:
+
+  ---
+  # meta/main.yml — описание роли. Читают его двое: ansible-galaxy
+  # (когда роль публикуют или устанавливают) и сам Ansible (когда
+  # роль вызывают — ради раздела dependencies).
+
+  galaxy_info:
+    role_name: web_admin
+    author: engineer
+    description: Веб-сервер и учебная страница сайта на Ubuntu и Rocky Linux
+    company: учебный стенд курса Ansible
+    license: MIT
+    min_ansible_version: "2.19"
+
+    platforms:
+      - name: Ubuntu
+        versions:
+          - all
+      - name: EL
+        versions:
+          - all
+
+    galaxy_tags:
+      - web
+      - apache
+
+  # Зависимости роли: список ролей, которые Ansible выполнит перед
+  # этой. Пустой список — у web_admin зависимостей нет. Если
+  # зависимость понадобится, запись выглядит так:
+  #
+  #   dependencies:
+  #     - role: common
+  #       vars:
+  #         common_timezone: Europe/Moscow
+  dependencies: []
+
+Файл roles/web_admin/README.md:
+
+  # Роль `web_admin`
+
+  Ставит и включает веб-сервер (`apache2` на Debian, `httpd` на
+  RedHat), раскладывает страницу сайта из шаблона `index.j2`
+  и оформление `style.css`, открывает порт в `ufw` или `firewalld`,
+  перезапускает службу обработчиком только при изменении шаблона.
+  Условий по имени машины нет: ветка выбирается по факту
+  `ansible_os_family`. Нужны коллекции `ansible.posix` и
+  `community.general`, факты узла и права `root`.
+
+  Переопределяемые значения — в `defaults/main.yml`
+  (`web_admin_deploy_site`, `web_admin_site_title`, `web_admin_port`
+  и другие). Значения, которые роль фиксирует
+  (`web_admin_supported_families`, `web_admin_family_settings`),
+  лежат в `vars/main.yml`: их перекрывает только `--extra-vars`.
+  Зависимостей нет. Лицензия — MIT.
+
+ВАЖНО: зависимость — это не «вызвать роль перед своей», а «моя
+роль невозможна без той». Если перед вашей ролью просто нужно
+что-то выполнить, зависимость лучше не использовать: она
+сработает и тогда, когда вашу роль вызовут вторым способом.
+
+
+#########################################################################
+ЧАСТЬ 2. ИТОГОВАЯ РАБОТА ТРЕКА «3 ДНЯ»
+#########################################################################
+
+
+=========================================================================
+ШАГ 11. СОБИРАЕМ ПРОЕКТ: ИНВЕНТАРЬ, GROUP_VARS, SITE.YML
+=========================================================================
+
+Проект — это роль плюс всё, что нужно для её запуска:
+
+  mkdir -p ~/ansible-lab/10_roles
+  cp -r files/10_roles/. ~/ansible-lab/10_roles/
+  cd ~/ansible-lab/10_roles
+
+Инвентарь — файл inventory.ini:
+
+  # Инвентарь учебного проекта практики 10. Формат INI.
+  #
+  # Группы по назначению (web, db) и группы по семейству ОС
+  # (debian, redhat) — разные вещи. Группа linux собирает
+  # все управляемые узлы стенда.
+
+  [web]
+  web1 ansible_host=10.0.2.11
+  web2 ansible_host=10.0.2.12
+
+  [db]
+  db1 ansible_host=10.0.2.13
+
+  [linux:children]
+  web
+  db
+
+  [debian:children]
+  web
+
+  [redhat:children]
+  db
+
+Настройки — файл ansible.cfg:
+
+  # ansible.cfg — настройки Ansible для учебного проекта практики 10.
+  # Тот же файл, что в практике 2, и по той же причине: секция
+  # называется [defaults], а инвентарь берётся из каталога проекта,
+  # поэтому команды выполняются из каталога 10_roles.
+
+  [defaults]
+  inventory = ./inventory.ini
+  host_key_checking = False
+  remote_user = engineer
+  interpreter_python = auto_silent
+  stdout_callback = default
+  callback_result_format = yaml
+  forks = 10
+
+Переменные всего проекта — group_vars/all.yml:
+
+  ---
+  # group_vars/all.yml — переменные всего проекта практики 10.
+  # Файл читается для каждой машины инвентаря: и для web1 с web2,
+  # и для db1.
+
+  # Подключение: те же пользователь и ключ, что в практиках 2–9.
+  ansible_user: engineer
+  ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+
+  # Владелец машины: учебное значение стенда. Переменная роли
+  # web_admin_owner берёт значение отсюда (см. group_vars/web.yml).
+  lab_owner: engineer
+
+  # Порт сайта: его открывает межсетевой экран в роли.
+  web_admin_port: 80
+
+Переменные группы web — group_vars/web.yml:
+
+  ---
+  # group_vars/web.yml — переменные только для машин группы web
+  # (web1 и web2). Здесь переопределяются значения по умолчанию
+  # роли web_admin: ровно для этого defaults и существуют.
+
+  # На машинах группы web страница сайта разворачивается.
+  # У роли по умолчанию false: на db1 сайта нет, там только httpd.
+  web_admin_deploy_site: true
+
+  # Заголовок страницы: у группы он свой, у роли — свой по умолчанию.
+  web_admin_site_title: "Веб-узел учебного стенда Ansible"
+
+  # Владелец машины: значение берётся из group_vars/all.yml.
+  web_admin_owner: "{{ lab_owner }}"
+
+И точка входа — site.yml:
+
+  ---
+  # site.yml — точка входа учебного проекта практики 10.
+  # Один play на группу linux: роль сама выбирает ветку
+  # по факту ansible_os_family, а не по имени машины.
+  #
+  # Запуск из каталога проекта:
+  #   cd ~/ansible-lab/10_roles
+  #   ansible-playbook --syntax-check site.yml
+  #   ansible-playbook site.yml
+
+  - name: Веб-сервер и сайт на узлах стенда
+    hosts: linux
+    become: true
+    gather_facts: true
+
+    roles:
+      - role: web_admin
+
+И описание проекта — файл files/10_roles/README.md:
+
+  # files/10_roles — учебный проект практики 10
+
+  Готовый проект итоговой работы трёхдневного трека: роль `web_admin`
+  и всё, что нужно, чтобы запустить её одной командой. Содержимое
+  каждого файла напечатано и в тексте практики `10_roles.txt`.
+
+  Состав: `ansible.cfg`, `inventory.ini`, `site.yml`, `group_vars/`
+  (`all.yml`, `web.yml`) и `roles/web_admin/` (`tasks`, `handlers`,
+  `defaults`, `vars`, `files`, `templates`, `meta`, `README.md`).
+
+  Запуск — из каталога проекта:
+
+  ```
+  cp -r /путь/к/репозиторию/files/10_roles/. ~/ansible-lab/10_roles/
+  cd ~/ansible-lab/10_roles
+  ansible-playbook site.yml
+  ```
+
+  На `web1` и `web2` появляется сайт из шаблона и порт 80 в `ufw`,
+  на `db1` — `httpd` и порт 80 в `firewalld`. Повторный прогон даёт
+  `changed=0`. Лицензия: код — MIT, тексты — CC BY-NC-SA 4.0.
+
+ПРОВЕРКА: посмотрите, что получилось, до запуска:
+
+  ansible-inventory --graph
+  ansible-playbook --list-hosts site.yml
+    hosts (3): web1, web2, db1
+
+
+=========================================================================
+ШАГ 12. ПЕРВЫЙ ПРОГОН: РАЗБИРАЕМ ВЫВОД
+=========================================================================
+
+  ansible-playbook site.yml
+
+  PLAY [Веб-сервер и сайт на узлах стенда]
+
+  TASK [web_admin : Установить веб-сервер]
+  changed: [web1]
+  changed: [web2]
+  changed: [db1]
+
+  TASK [web_admin : Разложить главную страницу из шаблона]
+  changed: [web1]
+  changed: [web2]
+  skipping: [db1]
+
+  ...дальше идут оформление страницы, служба, межсетевой экран,
+  правила ufw с item=80 и item=22 и firewalld на db1: каждая задача
+  печатает changed или ok в зависимости от того, что уже стоит
+  на машине после практики 9.
+
+  RUNNING HANDLER [web_admin : web_admin: перезапустить веб-сервер]
+  changed: [web1]
+  changed: [web2]
+
+  PLAY RECAP
+  db1  : changed=2  failed=0
+  web1 : changed=6  failed=0
+  web2 : changed=6  failed=0
+
+Вывод сокращён; звёздочки-разделители после имени задачи опущены:
+звёздочки запрещены правилами оформления текстовых практик. Счётчики
+ok и skipped здесь не приводим: ok зависит от того, считать ли задачи
+внутри пропущенного блока по одной, а skipped — от того же. Что
+именно пропущено, видно по выводу и сказано ниже словами. Числа
+changed тоже зависят от состояния машин: у нас к началу практики
+apache2, httpd и правила межсетевого экрана уже на месте (их
+поставила практика 9), поэтому часть задач отвечает ok, а не changed.
+Обработчики в первом прогоне выполнялись, поэтому попали и в ok,
+и в changed. Как складываются ok и skipped, подробно разобрано
+в практике 9, шаг 10.
+
+ЧТО ЗДЕСЬ ЧИТАТЬ: задачи помечены именем роли (web_admin : ...) —
+префикс Ansible добавляет сам; на web1 и web2 пропускается ветка
+Rocky Linux, а на db1 — ветка Ubuntu (правила ufw) и весь блок со
+страницей сайта: он стоит под условием web_admin_deploy_site, а на
+db1 значение по умолчанию false. RUNNING HANDLER стоит в конце,
+и только потому, что шаблон изменился.
+
+ПРОВЕРКА: если apache2 остался на узле от практики 9, у задачи
+установки пакета changed не будет — и это нормально.
+
+
+=========================================================================
+ШАГ 13. ВТОРОЙ ПРОГОН: CHANGED=0
+=========================================================================
+
+Запустите тот же плейбук ещё раз:
+
+  ansible-playbook site.yml
+
+  PLAY RECAP
+  db1  : changed=0  failed=0
+  web1 : changed=0  failed=0
+  web2 : changed=0  failed=0
+
+changed=0 на всех трёх машинах — главный признак того, что роль
+описывает состояние, а не выполняет действия. Обработчиков во втором
+прогоне нет: шаблон не изменился, значит уведомлять службу не о чем.
+Счётчики ok и skipped не приводим по той же причине, что и в первом
+прогоне: пропущенные ветки перечислены словами в шаге 12.
+
+ПРОВЕРКА: если changed не ноль, найдите в выводе задачу со
+строкой changed: [имя]: она и есть причина.
+
+
+=========================================================================
+ШАГ 14. ПРОВЕРКА ПО КРИТЕРИЯМ ИТОГОВОЙ РАБОТЫ
+=========================================================================
+
+Сайт отдаётся с обеих Ubuntu-машин:
+
+  curl -s http://10.0.2.11 | grep '<h1>'
+  curl -s http://10.0.2.12 | grep '<h1>'
+    <h1>Веб-узел учебного стенда Ansible</h1>
+
+Службы включены в автозапуск, порты открыты средствами Ansible:
+
+  ssh engineer@web1 'systemctl is-enabled apache2'
+  enabled
+  ssh engineer@db1 'systemctl is-enabled httpd'
+  enabled
+  ssh engineer@web1 'sudo ufw status | grep 80'
+  80/tcp                     ALLOW       Anywhere
+  ssh engineer@db1 'sudo firewall-cmd --list-ports'
+  80/tcp
+
+КРИТЕРИИ ИТОГОВОЙ РАБОТЫ (раздел 6 программы трека «3 дня»):
+
+  * роль создана и структурирована: есть tasks, handlers, defaults,
+    templates и meta;
+  * сайт работает на управляемых Ubuntu-узлах: curl отдаёт
+    страницу из шаблона;
+  * служба включена в автозапуск: systemctl is-enabled apache2
+    отвечает enabled;
+  * работает на другом семействе ОС: ставится httpd, ошибок нет;
+  * порты открыты средствами Ansible, а не руками;
+  * идемпотентность: повторный прогон даёт changed=0, failed=0;
+  * переменные вынесены: в задачах нет зашитых адресов и путей.
+
+Ключевой критерий, отличающий «получилось» от «умею», —
+идемпотентность и запуск на втором семействе ОС.
+
+
+=========================================================================
+ШАГ 15. ГДЕ РОЛЬ ПЕРЕИСПОЛЬЗУЕМА, А ГДЕ ВСЁ ЕЩЁ «ПОД СТЕНД»
+=========================================================================
+
+Переиспользуемая часть роли:
+
+  * задачи: они не знают ни имён машин, ни адресов;
+  * шаблон index.j2: он работает на любой машине парка;
+  * переменные: имена пакетов и служб взяты из фактов узла;
+  * обработчики: они не привязаны к конкретной службе.
+
+Часть, которая всё ещё «под стенд»: заголовок страницы говорит
+про учебный стенд, владелец машины — про engineer, а в
+group_vars/web.yml зашито, что сайт нужен именно группе web
+нашего инвентаря. Роль открывает порт 22, потому что так устроен
+стенд, и делает сразу две работы — веб-сервер и межсетевой экран.
+
+ЧЕГО НЕ ДЕЛАТЬ: не дописывайте роль под конкретную машину —
+ни условия inventory_hostname == "web1", ни отдельного значения
+в vars для одного узла. Как только роль узнала имя хоста, её
+нельзя применить ко второй машине, а именно за это роли и берут.
+
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+ПРОБЛЕМА: ERROR! the role 'web_admin' was not found in ...
+
+  ERROR! the role 'web_admin' was not found in /home/engineer/ansible-lab/10_roles/roles:/home/engineer/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles
+
+Причин две: роль лежит не там, где Ansible её ищет — места поиска
+перечислены в самом сообщении, — или каталог роли назван иначе,
+чем написано в play. Проверяйте по порядку: сначала куда Ansible
+смотрит и что лежит в roles/, потом имя роли в site.yml — оно
+должно совпадать с именем каталога символ в символ.
+
+  ls -d roles/*/
+  ansible-config dump | grep -i roles_path
+
+ПРОБЛЕМА: ERROR! 'roles' is not a valid attribute for a Task
+
+  ERROR! 'roles' is not a valid attribute for a Task
+  The offending line appears to be:
+
+    tasks:
+      - roles:
+        ^ here
+
+Ключ roles — ключ play, а не ключ задачи: его вставили внутрь
+блока tasks или на уровень ниже, чем нужно. Проверяйте по порядку:
+сначала уровень ключа (roles стоит рядом с hosts, become
+и gather_facts, а не внутри tasks), потом файл целиком.
+
+  ansible-playbook --syntax-check site.yml
+
+ПРОБЛЕМА: переменная роли не переопределяется
+
+Симптом: в group_vars/web.yml стоит web_admin_index_file: web.html,
+а роль кладёт страницу в index.html — и ошибок при этом нет.
+
+  TASK [web_admin : Разложить главную страницу из шаблона]
+  changed: [web1]
+  ...в конце прогона на узле появился /var/www/html/index.html,
+  а файла web.html нет.
+
+Причина: переменная объявлена не в defaults/main.yml, а в
+vars/main.yml: значения из vars сильнее и play, и group_vars,
+и host_vars. Проверяйте по порядку: сначала найдите, где она
+объявлена, потом посмотрите, какое значение видит роль.
+
+  grep -rn 'web_admin_index_file' roles/web_admin/
+
+Нашлась в vars/ — перенесите её в defaults/. Значение показывает
+временная задача ansible.builtin.debug с var: web_admin_index_file.
+
+ИСПРАВЛЕНО: в прежней версии курса это место было объяснено
+наоборот: «положите переменную в vars роли — её легко
+переопределить». Переопределяемое живёт в defaults, фиксируемое —
+в vars; разбор в шаге 3.
+
+ПРОБЛЕМА: роль «не видит» файл — Could not find or access 'index.j2'
+
+  fatal: [web1]: FAILED! => {"changed": false, "msg": "Could not find or access 'index.j2'\nSearched in:\n\t/home/engineer/ansible-lab/10_roles/roles/web_admin/templates/index.j2\n..."}
+
+Файл лежит не в том каталоге роли: у модуля template это
+templates/, у модуля copy — files/ (второе, что бывает, — файл
+назван index.j2.j2). Проверяйте по порядку: сначала что где лежит
+в роли, потом какое имя просит задача.
+
+  find roles/web_admin -type f | sort
+
+ПРОБЛЕМА: ERROR! The requested handler ... was not found
+
+  ERROR! The requested handler 'web_admin: обновить службу' was not found in either the main handlers list nor in the listening handlers list
+
+Notify не нашёл ни обработчика с таким именем, ни темы listen:
+имена сверяются символ в символ, включая пробелы и двоеточие.
+Проверяйте по порядку: сначала сравните строку notify в задаче
+и строку listen в обработчике, потом проверьте кавычки — без них
+разбор файла падает раньше, чем Ansible дойдёт до обработчиков.
+
+  grep -n 'notify' -A2 roles/web_admin/tasks/main.yml
+  grep -n 'listen' roles/web_admin/handlers/main.yml
+
+  - name: "web_admin: перезапустить веб-сервер"
+
+  ERROR! Syntax Error while loading YAML.
+    mapping values are not allowed in this context
+
+Кавычки обязательны у любого значения, внутри которого есть
+двоеточие с пробелом.
+
+ПРОБЛЕМА: второй прогон снова даёт changed
+
+  TASK [web_admin : Разложить главную страницу из шаблона]
+  changed: [web1]
+  changed: [web2]
+
+  PLAY RECAP
+  web1 : changed=2  failed=0
+
+changed=2 — это сама задача шаблона и обработчик, который
+перезапустил службу после неё. Роль не идемпотентна: шаблон
+от прогона к прогону даёт разный текст. Почти всегда причина —
+дата и время в шаблоне:
+
+  <p>Страница собрана: {{ ansible_date_time.iso8601 }}</p>
+
+Значение факта меняется каждую секунду, значит меняется и файл
+на узле. Проверяйте по порядку: сначала поищите в шаблоне
+подстановки, которые меняются сами, потом посмотрите, что именно
+изменилось в файле.
+
+  grep -n 'date_time' roles/web_admin/templates/index.j2
+  ansible-playbook site.yml --limit web1 --diff
+
+Уберите дату из шаблона — и второй прогон станет changed=0.
+
+ИСПРАВЛЕНО: в прежней версии курса в tasks/main.yml роли были
+сломаны отступы — параметр задачи уезжал на одну колонку влево
+относительно соседних:
+
+  - name: Установить веб-сервер
+    ansible.builtin.package:
+      name: "{{ web_admin_package }}"
+     state: present
+
+YAML такую запись не разбирает, и Ansible отвечает ошибкой, в
+которой нет ни слова про отступы:
+
+  ERROR! Syntax Error while loading YAML.
+    did not find expected key
+  The error appears to be in '.../roles/web_admin/tasks/main.yml': line 34, column 8
+
+Читайте это так: на строке 34 ключ стоит не там, где ожидался.
+Выравнивайте параметры одной задачи по одной колонке.
+
+
+=========================================================================
+ПРОВЕРКА РЕЗУЛЬТАТА
+=========================================================================
+
+Итоговая работа выполнена, если верны все пять пунктов.
+
+1. Файлы и структура роли на месте:
+
+     cd ~/ansible-lab/10_roles
+     find . -type f | wc -l
+     14
+
+2. Синтаксис в порядке, и роль видит три машины:
+
+     ansible-playbook --syntax-check site.yml
+     ansible-playbook --list-hosts site.yml
+       hosts (3): web1, web2, db1
+
+3. Сайт отдаётся с обеих Ubuntu-машин:
+
+     curl -s http://10.0.2.11 | grep '<h1>'
+     curl -s http://10.0.2.12 | grep '<h1>'
+       <h1>Веб-узел учебного стенда Ansible</h1>
+
+4. Службы включены в автозапуск, порты открыты средствами Ansible:
+
+     ssh engineer@web1 'systemctl is-enabled apache2'
+     enabled
+     ssh engineer@db1 'systemctl is-enabled httpd'
+     enabled
+     ssh engineer@web1 'sudo ufw status | grep 80'
+     80/tcp                     ALLOW       Anywhere
+
+5. Повторный прогон не меняет ничего, а переменные вынесены:
+
+     ansible-playbook site.yml
+     ...в PLAY RECAP у всех трёх машин changed=0 и failed=0
+
+ЕСЛИ ЧТО-ТО ИЗ ЭТОГО НЕ ВЫПОЛНЯЕТСЯ — смотрите не на роль,
+а на данные: инвентарь, group_vars и значения по умолчанию.
+
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Далее в курсе:
+
+  * практика 11 — регулярные выражения и точечная правка: правка
+    готовых конфигов там, где шаблон избыточен;
+  * практика 12 — Jinja2 для настоящих конфигов: шаблоны nginx
+    и sshd_config, циклы, фильтры и validate; index.j2 из нашей
+    роли — самый простой случай того, что разбирается там;
+  * практика 13 — хранилище: диски, LVM, файловые системы;
+  * практика 14 — сложные проекты: import_role и include_role,
+    delegate_to, serial, tags на весь проект;
+  * практика 15 — Galaxy и коллекции: geerlingguy.nginx вместо
+    своей роли, requirements.yml, argument_specs для web_admin;
+  * практика 16 — качество и динамическая инвентаризация:
+    ansible-lint и molecule на роль web_admin; итоговая работа
+    трека «5 дней».
+
+ПЕРЕД ПЕРЕХОДОМ уберите за собой:
+
+  * убирать нечего: проект — часть курса, он понадобится
+    в практиках 14–16;
+  * на web1 и web2 остался включённым ufw, но порт 22 открыт,
+    поэтому доступ по SSH не потерян;
+  * снимите снимок машин: в практике 13 мы разметим второй диск.

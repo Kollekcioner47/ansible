@@ -1,0 +1,51 @@
+---
+# tasks/common_checks.yml — общие проверки машины.
+#
+# Один и тот же файл подключён в проекте тремя способами:
+#   * playbooks/webservers.yml — статически, ключом import_tasks;
+#   * playbooks/db.yml         — динамически, ключом include_tasks;
+#   * playbooks/report.yml     — статически, перед сбором отчёта.
+#
+# Файл ничего не меняет на машине: он читает факты и падает, если
+# машина не готова к работе проекта, поэтому повторный прогон не даёт
+# changed. Факты он собирает сам: при запуске с --tags сбор фактов
+# в play может не выполниться, если тег play не совпал с фильтром.
+
+- name: Собрать факты машины для проверок
+  ansible.builtin.setup:
+  tags:
+    - checks
+    - always
+
+- name: Проверить, что семейство ОС поддерживается проектом
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in supported_families
+    fail_msg: >-
+      Проект не умеет работать на семействе
+      {{ ansible_facts['os_family'] }}: поддержаны
+      {{ supported_families | join(', ') }}.
+    success_msg: "Семейство {{ ansible_facts['os_family'] }} поддержано"
+    quiet: true
+
+- name: Посчитать свободное место на корневом разделе
+  ansible.builtin.set_fact:
+    common_root_free_mb: "{{ ((ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | list | first | default(0)) / 1024 / 1024) | round(0) | int }}"
+
+- name: Проверить, что на корневом разделе хватает места
+  ansible.builtin.assert:
+    that:
+      - common_root_free_mb | int >= min_free_mb | int
+    fail_msg: >-
+      На {{ inventory_hostname }} свободно {{ common_root_free_mb }} МБ,
+      а проекту нужно не меньше {{ min_free_mb }} МБ.
+    success_msg: "Свободного места хватает: {{ common_root_free_mb }} МБ"
+    quiet: true
+
+- name: Показать сводку по машине
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_version'] }},
+      ядро {{ ansible_facts['kernel'] }},
+      свободно {{ common_root_free_mb }} МБ

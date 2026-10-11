@@ -1,0 +1,106 @@
+---
+# Практика 12, шаги 3–5: виртуальный хост nginx из шаблонов.
+# Запуск: ansible-playbook 01_nginx.yml --diff
+# Повторный прогон должен дать changed=0.
+#
+# nginx слушает 8080, а не 80: порт 80 на web1 и web2 занят apache2,
+# который поставили практики 9 и 10. Пакет nginx ставит ещё и свой
+# виртуальный хост по умолчанию, а тот слушает 80, поэтому плейбук
+# его убирает.
+
+- name: "Развернуть виртуальный хост nginx на web1"
+  hosts: web1
+  become: true
+  vars_files:
+    - vars/nginx.yml
+  handlers:
+    - name: "Перезапустить nginx"
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: restarted
+        enabled: true
+  tasks:
+    - name: "Установить nginx из репозитория ОС (Debian)"
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: "Установить nginx из репозитория ОС (RedHat)"
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: "Убрать виртуальный хост по умолчанию (Debian)"
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      when: ansible_os_family == "Debian"
+      notify: Перезапустить nginx
+
+    - name: "Убрать виртуальный хост по умолчанию (RedHat)"
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d/default.conf
+        state: absent
+      when: ansible_os_family == "RedHat"
+      notify: Перезапустить nginx
+
+    # Порт 8080 открывается отдельной задачей: на web1 включён ufw
+    # с политикой deny, и без правила curl с управляющей машины
+    # до nginx не дойдёт. Правило открывает порт из переменной
+    # nginx_port, поэтому порт в плейбуке не зашит.
+    - name: "Открыть порт nginx в межсетевом экране"
+      community.general.ufw:
+        rule: allow
+        port: "{{ nginx_port }}"
+        proto: tcp
+
+    - name: "Создать каталог сайта"
+      ansible.builtin.file:
+        path: "{{ nginx_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Положить страницу-заглушку в корень сайта"
+      ansible.builtin.copy:
+        content: "<h1>{{ inventory_hostname }}</h1>\n<p>Страница практики 12.</p>\n"
+        dest: "{{ nginx_root }}/{{ nginx_index }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "Развернуть upstream из шаблона nginx_upstream.j2"
+      ansible.builtin.template:
+        src: nginx_upstream.j2
+        dest: "/etc/nginx/conf.d/{{ nginx_upstream_name }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        validate: "nginx -t"
+        backup: true
+      notify: Перезапустить nginx
+
+    - name: "Развернуть виртуальный хост из шаблона nginx_vhost.j2"
+      ansible.builtin.template:
+        src: nginx_vhost.j2
+        dest: "/etc/nginx/conf.d/{{ nginx_server_name }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        validate: "nginx -t"
+        backup: true
+      notify: Перезапустить nginx
+
+    - name: "Проверить конфигурацию nginx целиком"
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false

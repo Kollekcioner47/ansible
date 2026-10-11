@@ -1,0 +1,16 @@
+---
+# site.yml — точка входа проекта практики 14: только включения
+# плейбуков, ни одной задачи. Порядок включений — порядок работы.
+# Окружение выбирается ключом -i, сам файл от него не зависит.
+# Ключ import_playbook записан коротко, как в документации Ansible:
+# это ключ плейбука, а не модуль. Полное имя —
+# ansible.builtin.import_playbook, принимаются оба варианта.
+
+- name: Настроить веб-часть стенда
+  import_playbook: playbooks/webservers.yml
+
+- name: Настроить сервер баз данных
+  import_playbook: playbooks/db.yml
+
+- name: Собрать отчёт о парке машин
+  import_playbook: playbooks/report.yml

@@ -1,0 +1,17 @@
+---
+# prepare.yml — подготовка до converge. Машины уже существуют
+# (их собрали в практике 1), поэтому проверяем, что попали
+# на нужные: ошибка будет видна здесь, а не в середине роли.
+
+- name: Убедиться, что проверяются машины стенда
+  hosts: all
+  become: false
+  gather_facts: true
+  tasks:
+    - name: Проверить семейство ОС и адрес машины
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'Debian'
+          - ansible_facts['default_ipv4']['address'] in ['10.0.2.11', '10.0.2.12']
+        fail_msg: "Сценарий проверяет web1 и web2, а на {{ inventory_hostname }} семейство {{ ansible_facts['os_family'] }} и адрес {{ ansible_facts['default_ipv4']['address'] }}"
+        quiet: true

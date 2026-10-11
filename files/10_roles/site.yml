@@ -1,0 +1,17 @@
+---
+# site.yml — точка входа учебного проекта практики 10.
+# Один play на группу linux: роль сама выбирает ветку
+# по факту ansible_os_family, а не по имени машины.
+#
+# Запуск из каталога проекта:
+#   cd ~/ansible-lab/10_roles
+#   ansible-playbook --syntax-check site.yml
+#   ansible-playbook site.yml
+
+- name: Веб-сервер и сайт на узлах стенда
+  hosts: linux
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: web_admin

@@ -1,0 +1,44 @@
+---
+# 03_lvm.yml — практика 13, шаг 5: группа томов data и логический том webdata.
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 03_lvm.yml
+
+- name: "LVM: группа томов и логический том"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Поставить пакеты работы с LVM"
+      ansible.builtin.package:
+        name: "{{ storage_packages }}"
+        state: present
+
+    - name: "Создать группу томов data на разделе второго диска"
+      community.general.lvg:
+        vg: "{{ storage_vg }}"
+        pvs:
+          - "{{ storage_partition }}"
+        state: present
+
+    - name: "Создать логический том webdata начального размера"
+      community.general.lvol:
+        vg: "{{ storage_vg }}"
+        lv: "{{ storage_lv }}"
+        size: "{{ storage_lv_size }}"
+        shrink: false
+        state: present
+
+    - name: "Показать группы томов"
+      ansible.builtin.command:
+        cmd: vgs
+      register: vgs_result
+      changed_when: false
+
+    - name: "Вывести состояние групп томов"
+      ansible.builtin.debug:
+        var: vgs_result.stdout_lines

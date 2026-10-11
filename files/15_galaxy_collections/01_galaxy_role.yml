@@ -1,0 +1,51 @@
+---
+# 01_galaxy_role.yml — готовая роль из Galaxy вместо своей.
+#
+# Роль geerlingguy.nginx ставит и настраивает nginx. Имена переменных
+# не выдуманы: взяты только те, что описаны в README самой роли.
+#
+# Порт 8080, а не 80. На web1 и web2 порт 80 занят apache2, который
+# поставила своя роль web_admin в практике 10: два веб-сервера на
+# одном порту не уживаются.
+#
+# Запуск из каталога проекта:
+#
+#   cd ~/ansible-lab/15_galaxy
+#   ansible-playbook 01_galaxy_role.yml
+
+- name: nginx из Galaxy на машинах группы web
+  hosts: web
+  become: true
+  gather_facts: true
+
+  vars:
+    # Документированные переменные роли geerlingguy.nginx.
+    #
+    # nginx_remove_default_vhost убирает виртуальный хост, который
+    # пакет nginx ставит сам: он слушает порт 80 и мешает apache2.
+    nginx_remove_default_vhost: true
+    nginx_service_state: started
+    nginx_service_enabled: true
+
+    # Свой виртуальный хост: слушает 8080 и отдаёт ту же страницу,
+    # что и apache2, — каталог /var/www/html из практики 10.
+    # filename задан явно: иначе роль назвала бы файл по server_name.
+    nginx_vhosts:
+      - listen: "8080 default_server"
+        server_name: "{{ inventory_hostname }}"
+        root: "/var/www/html"
+        index: "index.html"
+        filename: "lab-8080.conf"
+
+  tasks:
+    # Роли выполняются до задач play, поэтому правило ufw добавляется
+    # уже после запуска nginx. Порт SSH роль web_admin открыла ранее,
+    # так что доступ по SSH не теряется.
+    - name: Открыть порт 8080 в межсетевом экране
+      community.general.ufw:
+        rule: allow
+        port: "8080"
+        proto: tcp
+
+  roles:
+    - role: geerlingguy.nginx

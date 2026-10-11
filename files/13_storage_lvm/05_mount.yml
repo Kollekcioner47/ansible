@@ -1,0 +1,57 @@
+---
+# 05_mount.yml — практика 13, шаг 7: монтирование и запись в /etc/fstab.
+# state: mounted означает «строка в fstab есть и том смонтирован сейчас».
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 05_mount.yml
+
+- name: "Монтирование логического тома"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Создать точку монтирования"
+      ansible.builtin.file:
+        path: "{{ storage_mount }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Смонтировать том и записать его в fstab"
+      ansible.posix.mount:
+        path: "{{ storage_mount }}"
+        src: "/dev/mapper/{{ storage_vg }}-{{ storage_lv }}"
+        fstype: "{{ storage_fstype }}"
+        opts: "{{ storage_mount_opts }}"
+        dump: "0"
+        passno: "2"
+        state: mounted
+
+    - name: "Смонтировать всё, что описано в fstab"
+      ansible.builtin.command:
+        cmd: mount -a
+      changed_when: false
+
+    - name: "Прочитать, что смонтировано в точке монтирования"
+      ansible.builtin.command:
+        cmd: "findmnt {{ storage_mount }}"
+      register: mount_result
+      changed_when: false
+      failed_when: false
+
+    - name: "Проверить, что том смонтирован и это нужная файловая система"
+      ansible.builtin.assert:
+        that:
+          - mount_result.rc == 0
+          - mount_result.stdout is search(storage_lv)
+          - mount_result.stdout is search(storage_fstype)
+        fail_msg: >-
+          {{ storage_mount }} не смонтирован с тома {{ storage_lv }}
+          или файловая система не {{ storage_fstype }}.
+        success_msg: "{{ storage_mount }} смонтирован с тома {{ storage_lv }}."

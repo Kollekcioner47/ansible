@@ -1,0 +1,25 @@
+{#- Шаблон /etc/motd. Собирается на каждой машине группы linux. -#}
+{{ ansible_managed }}
+=========================================================================
+  {{ inventory_hostname | upper }} — учебный стенд курса Ansible
+  {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})
+=========================================================================
+
+Машина:      {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
+Ядер:        {{ ansible_processor_vcpus }}
+Память, МБ:  {{ ansible_memtotal_mb }}
+Группы:      {{ group_names | sort | join(', ') }}
+
+Адреса машин группы linux:
+{% for host in groups['linux'] %}
+{% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
+{% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+  {{ '%-6s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
+{% endfor %}
+Всего машин: {{ groups['linux'] | length }} ({% for host in groups['linux'] %}{{ host }}{{ ', ' if not loop.last else '' }}{% endfor %})
+Владелец:    {{ ansible_local.site.general.owner | default('не назначен') }}
+{% if motd_notice is defined %}
+
+Объявление:
+{{ motd_notice }}
+{% endif %}

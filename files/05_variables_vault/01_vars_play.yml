@@ -1,0 +1,23 @@
+---
+# Переменные в разных местах: часть задана прямо здесь, часть — в
+# инвентаре, то есть в group_vars и host_vars из практики 2. Задача
+# печатает, какое значение в итоге победило.
+
+- name: Показать, откуда взялась переменная web_port
+  hosts: linux
+  gather_facts: false
+
+  # Переменные плейбука сильнее переменных инвентаря: и group_vars,
+  # и host_vars. Число 8081 — учебная метка, а не рабочий порт.
+  vars:
+    web_port: 8081
+    site_root: /var/www/html
+
+  tasks:
+    - name: Напечатать значения переменных
+      ansible.builtin.debug:
+        msg:
+          - "машина: {{ inventory_hostname }}"
+          - "web_port: {{ web_port }}"
+          - "site_root: {{ site_root }}"
+          - "владелец: {{ lab_owner | default('не назначен') }}"

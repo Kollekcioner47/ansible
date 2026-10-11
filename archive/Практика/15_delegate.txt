@@ -1,0 +1,28 @@
+1) playbook
+---
+- name: delegate playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message: "Hello, World!"
+
+  tasks:
+    - name: ping
+      ping:
+    
+    - name: create file
+      copy: 
+        dest: /home/file1.txt
+        content: |
+          This is fileN1
+          On {{message}}
+      delegate_to: linux1
+    - name: create second file
+      copy:
+        dest: /home/file1.txt
+        content: |
+          This is fileN1
+          On {{message}}
+
+2) 

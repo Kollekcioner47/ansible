@@ -1,0 +1,44 @@
+---
+# 05_services.yml — практика 9, шаг 6: службы и свой таймер systemd.
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 05_services.yml
+
+- name: Службы и свой таймер systemd
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: Прочитать переменные для семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: Веб-сервер запущен, включён в автозапуск и не заблокирован
+      ansible.builtin.systemd_service:
+        name: "{{ web_service }}"
+        state: started
+        enabled: true
+        masked: false
+
+    - name: Положить юнит проверки часового пояса
+      ansible.builtin.template:
+        src: templates/timezone-check.service.j2
+        dest: /etc/systemd/system/timezone-check.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Положить таймер проверки часового пояса
+      ansible.builtin.template:
+        src: templates/timezone-check.timer.j2
+        dest: /etc/systemd/system/timezone-check.timer
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Включить и запустить таймер
+      ansible.builtin.systemd_service:
+        name: timezone-check.timer
+        state: started
+        enabled: true
+        daemon_reload: true

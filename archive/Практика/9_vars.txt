@@ -1,0 +1,218 @@
+1) Создадим файл инвентори hosts.txt
+в нём определим строки с переменными:
+[all_linux]
+linux1 ansible_host=ip  owner=Vasya
+linux1 ansible_host=ip  owner=Petya
+linux1 ansible_host=ip  owner=Masha
+
+2) создадим папку group_vars
+в этой папке создадим файл linux_servers
+В нём напишем:
+---
+ansible_user : engineer
+ansible_ssh_private_key_file : /home/engineer/.ssh/id_rsa
+...
+
+3) в папке проекта создадим конфиг файл
+vim ansible.cfg
+в нём мы напишем:
+[default] - это указанение на конфиг по умолчанию
+host_key_checking = false - чтобы не спрашивал про отпечатки пальцев при первом подключении
+inventory = ./hosts.txt - чтобы не надо было указывать файл inventory
+
+4) создадим playbook.yml
+в нём мы напишем:
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      vasr: secret
+...
+4) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат - вывод паролей на хостах
+
+5) в playbook добавим task:
+
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+...
+6) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат - вывод паролей на хостах дважды
+
+7) в playbook добавим debug:
+
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+  - debug:
+      msg: "This server Owner --->>> {{ owner }} <---
+
+
+8) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат
+
+9) в playbook добавим set_facts:
+
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+  - debug:
+      msg: "This server Owner --->>> {{ owner }} <---
+  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - debug:
+      var: full_message
+...
+10) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат
+
+11) посмотрим метаданные серверов  
+ansible all -m setup
+
+видим, что есть большое количество готовых переменных, к которым мы можем обращаться
+выведем переменную ansible_distibution:
+
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+  - debug:
+      msg: "This server Owner --->>> {{ owner }} <---
+  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - debug:
+      var: full_message
+  - debug:
+      var: ansible_distibution
+...
+12) результат выполнения команд и модулей тоже можно передать в переменную:
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+  - debug:
+      msg: "This server Owner --->>> {{ owner }} <---
+  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - debug:
+      var: full_message
+  - debug:
+      var: ansible_distibution
+  - shell
+    register: shell_result
+  - debug:
+      var: shell_result
+...
+13) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат
+
+14) Так как результат вывода модуля shell в json формате, то вместо всего вывода
+мы можем вывести не весь вывод, а его часть, обратившись к методу внутри вывода:
+
+---
+- name : My Variables playbook
+  hosts: all
+  become: yes
+
+  vars:
+    message1: Hello
+    message2: World
+    secret: MyStrongPassword
+
+  tasks:
+  - name: Print Secret Variable
+    debug:
+      var: secret
+  - debug:
+      msg: "Secret Word: {{ secret }}"  
+  - debug:
+      msg: "This server Owner --->>> {{ owner }} <---
+  - set_fact: full_message="{{ message1 }} {{ message2 }} from {{owner}}"
+  - debug:
+      var: full_message
+  - debug:
+      var: ansible_distibution
+  - shell
+    register: shell_result
+  - debug:
+      var: shell_result.stdout
+...
+
+15) Запускаем:
+ansible-playbook playbook.yml
+смотрим результат

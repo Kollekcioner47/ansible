@@ -1,0 +1,109 @@
+1) Копируем содержимое прошлого урока
+2) Создадим файл playbookloop.yml:
+---
+- name: Loops playbook
+  host: linux1
+  become: yes
+
+  tasks:
+  - name: Say Hello
+    debug: msg="Hello {{ item }}"
+    loop: 
+      - "Vasya"
+      - "Petya"
+      - "Masha"
+      - "Vanya"
+3) Проверяем работу:
+ansible-playbook playbookloop.yml
+
+4) изменяем файл:
+  
+  - name: loop until
+    shell: echo -n Z >> myfile.txt && cat myfile.txt
+    # отправить в аутпут
+    register: output
+    # делать три раза
+    delay: 3
+    # повторить десять раз
+    retries: 10 #по умолчанию 3
+    # или пока не написшет 4 Z
+    until: output.stdout.find("ZZZZ") == false
+  
+  - name: Print output
+    debug:
+      var: output.stdout
+# установка кучи ПО
+#  - name: install many packages
+#    apt: name={{ item }} state=installed
+#    with_items:
+#      - mc
+#      - apache2
+#      - pip
+#      - curl
+
+применяем и проверяем
+
+5) вариант с веб-сервером
+---
+- name: Install Apache and upload WebSite
+  host: all
+  become: yes
+
+  vars:
+    source_folder: ./MyWebSite/
+    destin_folder: /var/www/html
+
+    tasks:
+  - name: check LINUX
+    debug: var=ansible_os_family
+
+  - block: #Debian   
+
+    - name: Install Apache  for Debian
+      apt: name: apache2 state=latest
+
+    - name: Start Apache service for Debian
+      service: name=apache2 state=started enabled=yes
+    
+    when: ansible_os_family=="Debian"  
+  
+  - block: #Centos
+    - name: install Apache for Centos
+      yum: name=httpd state=latest
+
+    - name: Start Apache service for CentOS
+      service: name=httpd state=started enabled=yes
+    
+    when: ansible_os_family=="RedHat"
+
+  - name: Copy WebPage to WebServer
+    copy: src={{ source_folder }}/{{ item }} dest={{ destin_folder }} mode=0555
+    loop:
+      - "index.html"
+      - "pic1.jpg"
+      - "pic2.jpg"
+      - "pic3.jpg"
+      - "pic4.jpg"
+    notify: Restart Apache Debian
+    notify: Restart Apache CentOS
+
+  handlers:
+
+  - name: Restart Apache Debian
+    service: name=apache2 state=restarted
+    when: ansible_os_family=="Debian"
+  
+  - name: Restart Apache CentOS
+    service: name=httpd state=restarted
+    when: ansible_os_family=="RedHat"
+...
+
+применяем
+
+Другой вариант цикла по файлам:
+
+ - name: Copy WebPage to WebServer
+    copy: src={{ item }} dest={{ destin_folder }} mode=0555
+    with_fileglob: "{{ source_folder }}/*"
+    notify: Restart Apache Debian
+    notify: Restart Apache CentOS

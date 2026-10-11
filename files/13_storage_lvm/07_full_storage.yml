@@ -1,0 +1,147 @@
+---
+# 07_full_storage.yml — практика 13, шаг 9: весь путь целиком.
+# Диск — раздел — группа томов — логический том — файловая система —
+# монтирование, одним плейбуком.
+#
+# Описание собрано так, чтобы повторный прогон дал changed=0:
+# раздел описывается без размеров, том — точным числом, файловая
+# система — без force, а все читающие команды помечены
+# changed_when: false.
+#
+# ОПАСНО: плейбук размечает диск. Работать только на учебном стенде.
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 07_full_storage.yml
+
+- name: "Хранилище: диск, LVM, файловая система и монтирование"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Поставить пакеты для работы с дисками"
+      ansible.builtin.package:
+        name: "{{ storage_packages }}"
+        state: present
+
+    - name: "Проверить, что второй диск существует"
+      ansible.builtin.stat:
+        path: "{{ storage_disk }}"
+      register: disk_stat
+
+    - name: "Посмотреть, что смонтировано со второго диска"
+      ansible.builtin.command:
+        cmd: "lsblk -n -o MOUNTPOINT {{ storage_disk }}"
+      register: disk_mounts
+      changed_when: false
+
+    - name: "Остановиться, если диска нет или с него что-то смонтировано"
+      ansible.builtin.assert:
+        that:
+          - disk_stat.stat.exists
+          - disk_stat.stat.isblk
+          - disk_mounts.stdout | trim == ""
+        fail_msg: >-
+          Диск {{ storage_disk }} не найден или с него что-то смонтировано.
+          Плейбук остановлен, чтобы не уничтожить данные.
+
+    - name: "Создать таблицу разделов GPT и раздел 1 на весь диск"
+      community.general.parted:
+        device: "{{ storage_disk }}"
+        number: 1
+        label: gpt
+        name: data
+        flags:
+          - lvm
+        state: present
+      register: parted_result
+
+    - name: "Попросить ядро перечитать таблицу разделов"
+      ansible.builtin.command:
+        cmd: "partprobe {{ storage_disk }}"
+      when: parted_result.changed
+
+    - name: "Дождаться, пока ядро увидит раздел"
+      ansible.builtin.command:
+        cmd: "lsblk -n -o NAME {{ storage_partition }}"
+      register: part_check
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: part_check.rc == 0
+
+    - name: "Создать группу томов data"
+      community.general.lvg:
+        vg: "{{ storage_vg }}"
+        pvs:
+          - "{{ storage_partition }}"
+        state: present
+
+    - name: "Создать логический том webdata и расширить файловую систему"
+      community.general.lvol:
+        vg: "{{ storage_vg }}"
+        lv: "{{ storage_lv }}"
+        size: "{{ storage_lv_size_extended }}"
+        resizefs: true
+        shrink: false
+        state: present
+
+    - name: "Создать файловую систему, если её ещё нет"
+      community.general.filesystem:
+        fstype: "{{ storage_fstype }}"
+        dev: "/dev/mapper/{{ storage_vg }}-{{ storage_lv }}"
+        state: present
+
+    - name: "Создать точку монтирования"
+      ansible.builtin.file:
+        path: "{{ storage_mount }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "Смонтировать том и записать его в fstab"
+      ansible.posix.mount:
+        path: "{{ storage_mount }}"
+        src: "/dev/mapper/{{ storage_vg }}-{{ storage_lv }}"
+        fstype: "{{ storage_fstype }}"
+        opts: "{{ storage_mount_opts }}"
+        dump: "0"
+        passno: "2"
+        state: mounted
+
+    - name: "Смонтировать всё, что описано в fstab"
+      ansible.builtin.command:
+        cmd: mount -a
+      changed_when: false
+
+    - name: "Прочитать, что смонтировано в точке монтирования"
+      ansible.builtin.command:
+        cmd: "findmnt {{ storage_mount }}"
+      register: mount_result
+      changed_when: false
+      failed_when: false
+
+    - name: "Проверить, что том смонтирован и это нужная файловая система"
+      ansible.builtin.assert:
+        that:
+          - mount_result.rc == 0
+          - mount_result.stdout is search(storage_lv)
+          - mount_result.stdout is search(storage_fstype)
+        fail_msg: >-
+          {{ storage_mount }} не смонтирован с тома {{ storage_lv }}
+          или файловая система не {{ storage_fstype }}.
+
+    - name: "Показать занятое место на точке монтирования"
+      ansible.builtin.command:
+        cmd: "df -h {{ storage_mount }}"
+      register: df_result
+      changed_when: false
+
+    - name: "Вывести итог по месту"
+      ansible.builtin.debug:
+        var: df_result.stdout_lines

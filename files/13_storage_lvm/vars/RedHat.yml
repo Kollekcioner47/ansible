@@ -1,0 +1,37 @@
+---
+# Переменные семейства RedHat (Rocky Linux 10): db1.
+# Файл читается задачей ansible.builtin.include_vars в pre_tasks.
+# Имена переменных те же, что в Debian.yml, значения другие: в этом
+# и смысл переменных по семейству ОС.
+
+# Второй диск стенда: 10 ГБ, есть только на управляемых узлах.
+storage_disk: /dev/sdb
+storage_partition: "{{ storage_disk }}1"
+
+# Имена из единого реестра сущностей курса.
+storage_vg: data
+storage_lv: webdata
+storage_mount: /srv/data
+
+# Те же размеры, что и на Ubuntu: описание состояния не должно
+# зависеть от семейства ОС.
+storage_lv_size: 6G
+storage_lv_size_extended: 8G
+
+# Файловая система: на Rocky Linux по умолчанию xfs, и это
+# осознанный выбор — xfs умеет расти на смонтированной файловой
+# системе, но не умеет уменьшаться.
+storage_fstype: xfs
+
+# Инструмент расширения xfs. Он работает не с устройством,
+# а с точкой монтирования, поэтому файловая система должна быть
+# смонтирована до расширения.
+storage_grow_tool: xfs_growfs
+
+storage_mount_opts: "defaults,noatime"
+
+# На Rocky Linux нужен только xfsprogs: mkfs.xfs живёт в нём.
+storage_packages:
+  - parted
+  - lvm2
+  - xfsprogs

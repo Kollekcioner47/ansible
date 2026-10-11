@@ -1,0 +1,5 @@
+{#- Шаблон рендерит lookup('template', ...) на управляющей машине. -#}
+Объявление для {{ inventory_hostname }} ({{ ansible_os_family }})
+Стенд: {{ site_title | default('учебный стенд курса Ansible') }}
+Источник: {{ lab_notice_source | basename }}
+Строк в тексте: {{ lab_notice_text | default('') | length }}

@@ -1,0 +1,65 @@
+---
+# playbooks/report.yml — отчёт о парке машин.
+#
+# Отчёт собирается не на узлах, а на управляющей машине: файл должен
+# быть один. Ключ delegate_to: localhost выполняет задачу на control,
+# а run_once — один раз, хотя play идёт по всем машинам парка.
+#
+# serial в этом play не задан намеренно: run_once выполняется один раз
+# на партию, и с serial: 1 каждая партия переписала бы файл заново.
+#
+# Строку отчёта считает каждая машина про себя, а записывает её один
+# хост, поэтому в тексте перебираются hostvars всех машин.
+
+- name: Собрать отчёт о парке машин
+  hosts: linux
+  become: false
+  gather_facts: true
+  tags:
+    - report
+
+  tasks:
+    - name: Выполнить общие проверки машины
+      ansible.builtin.import_tasks: ../tasks/common_checks.yml
+      tags:
+        - checks
+        - always
+
+    - name: Собрать строку отчёта по своей машине
+      ansible.builtin.set_fact:
+        fleet_row: >-
+          {{ inventory_hostname }} | {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }} |
+          ядро {{ ansible_facts['kernel'] }} |
+          свободно {{ common_root_free_mb }} МБ
+
+    - name: Создать каталог для отчётов на управляющей машине
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Записать отчёт одним файлом на управляющей машине
+      ansible.builtin.copy:
+        content: |
+          # Отчёт о парке машин учебного стенда.
+          # Файл собран задачей с delegate_to: localhost и run_once: true,
+          # поэтому он один, а не по копии на каждой машине.
+          fleet_report:
+            machines_total: {{ groups['linux'] | length }}
+            environment: "{{ report_title }}"
+            machines:
+          {%- for host in groups['linux'] | sort %}
+              - {{ hostvars[host]['fleet_row'] | default(host ~ ': данных нет') }}
+          {%- endfor %}
+        dest: "{{ report_dir }}/{{ report_file }}"
+        mode: "0644"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Показать, где лежит отчёт
+      ansible.builtin.debug:
+        msg: "Отчёт собран на управляющей машине: {{ report_dir }}/{{ report_file }}"
+      run_once: true

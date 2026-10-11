@@ -1,0 +1,40 @@
+# 04_web_full.yml — шаги 8 и 9 практики 4: рабочий сценарий.
+# Пакет, файл, состояние службы и обработчик перезапуска.
+# Порядок задач — причина, по которой страница ложится после
+# пакета.
+
+- name: Веб-сервер со своей страницей
+  hosts: web:db
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Обновить кэш пакетов
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Установить пакет веб-сервера
+      ansible.builtin.apt:
+        name: apache2
+        state: present
+
+    - name: Положить главную страницу сайта
+      ansible.builtin.copy:
+        src: index.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Перезапустить веб-сервер
+
+    - name: Включить веб-сервер и держать его запущенным
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Перезапустить веб-сервер
+      ansible.builtin.service:
+        name: apache2
+        state: restarted

@@ -1,0 +1,58 @@
+---
+# 03_blockinfile_markers.yml — шаг 10 практики 11.
+# Блок строк между маркерами: свой marker, marker_begin и marker_end,
+# повторный прогон и удаление блока вместе с маркерами.
+#   ansible-playbook 03_blockinfile_markers.yml
+# Второй прогон обязан дать changed=0.
+
+- name: Управлять двумя блоками в /etc/hosts
+  hosts: web
+  become: true
+  gather_facts: false
+  vars:
+    lab_hosts_block: |
+      10.0.2.5   control
+      10.0.2.11  web1
+      10.0.2.12  web2
+      10.0.2.13  db1
+    lab_fqdn_block: |
+      10.0.2.5   control.example.ru
+      10.0.2.11  web1.example.ru
+  tasks:
+    - name: Добавить блок коротких имён со своим маркером
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: "{{ lab_hosts_block }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: стенд курса"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+
+    - name: "Добавить второй блок: маркеры своими словами"
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: "{{ lab_fqdn_block }}"
+        marker: "# {mark} LAB FQDN"
+        marker_begin: "НАЧАЛО"
+        marker_end: "КОНЕЦ"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Прочитать границы обоих блоков
+      ansible.builtin.command:
+        cmd: grep -n -e 'ANSIBLE MANAGED BLOCK' -e 'LAB FQDN' /etc/hosts
+      register: hosts_blocks
+      changed_when: false
+      failed_when: hosts_blocks.rc not in [0, 1]
+
+    - name: Показать границы блоков в отчёте
+      ansible.builtin.debug:
+        var: hosts_blocks.stdout_lines
+
+    - name: Удалить блок, который оставил прошлый стенд
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: прошлый стенд"
+        state: absent

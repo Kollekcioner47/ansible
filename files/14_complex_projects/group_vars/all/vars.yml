@@ -1,0 +1,37 @@
+---
+# group_vars/all/vars.yml — переменные, общие для всех машин проекта
+# и для обоих окружений. Выбрана форма каталога group_vars/all/,
+# а не файл group_vars/all.yml: рядом лежит пример файла секретов
+# vault.yml.example, а обе формы одного места не держат — когда есть
+# и каталог all/, и файл all.yml, Ansible читает каталог, а файл
+# остаётся не прочитанным: молча, без единой ошибки.
+
+# Подключение: те же пользователь и ключ, что в практиках 2–10.
+ansible_user: engineer
+ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+
+# Владелец машин стенда. Учебное значение.
+lab_owner: engineer
+
+# Роль web_admin: порт сайта и заголовок страницы по умолчанию.
+# Заголовок переопределяют окружения в group_vars/dev.yml и prod.yml.
+web_admin_port: 80
+web_admin_site_title: "Учебный стенд курса Ansible"
+
+# Общие проверки: на сервере баз данных их можно выключить.
+common_checks_enabled: true
+
+# Семейства ОС, с которыми работает проект.
+supported_families:
+  - Debian
+  - RedHat
+
+# Порог свободного места на корневом разделе: 500 МБ.
+min_free_mb: 500
+
+# Каталог для резервных копий на db1 (playbooks/db.yml).
+db_backup_dir: /var/backups/lab-db
+
+# Каталог и имя файла отчёта на управляющей машине.
+report_dir: /home/engineer/ansible-lab/14_complex_projects/reports
+report_file: fleet-report.txt

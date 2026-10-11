@@ -1,0 +1,7 @@
+---
+# Переменные семейства Debian (Ubuntu 26.04 LTS: web1, web2).
+web_package: apache2
+web_service: apache2
+web_config_dir: /etc/apache2/sites-available
+web_root: /var/www/html
+firewall_package: ufw

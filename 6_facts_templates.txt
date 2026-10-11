@@ -1,0 +1,1579 @@
+Практика 6. Факты и шаблоны Jinja2.
+
+ЭТА ПРАКТИКА О ТОМ, ОТКУДА ПЛЕЙБУК ЗНАЕТ ПРО МАШИНУ. Ansible сам
+собирает о каждом узле сотни значений — это факты. Научимся брать
+из них нужные, добавлять свои пометки и собирать из этих данных файлы
+шаблонами Jinja2. Опирается практика на практики 2 и 4.
+
+
+=========================================================================
+ЧТО МЫ СДЕЛАЕМ
+=========================================================================
+
+Посмотрим, что Ansible знает о машине, и научимся брать только нужные
+факты: полный сбор на большом парке стоит времени.
+
+Проверим предположения о хосте модулями ansible.builtin.debug
+и ansible.builtin.assert.
+
+Разложим настраиваемые факты в /etc/ansible/facts.d — INI и JSON —
+и прочитаем их через ansible_local: так машина получает пометку о роли,
+владельце и версии стенда.
+
+Напишем два шаблона: index.j2 — страница сайта с фактами и владельцем
+машины, и motd.j2 — сводка о парке циклом по groups['linux'].
+
+Разберём волшебные переменные (hostvars, groups, group_names,
+inventory_dir, ansible_check_mode), фильтры и тесты Jinja2 и познакомимся
+с validate — проверкой файла до того, как он попал на место.
+
+В конце посчитаем, во что обходится полный сбор фактов.
+
+
+=========================================================================
+ЧТО ПОНАДОБИТСЯ
+=========================================================================
+
+СТЕНД ИЗ ПРАКТИК 1-5: четыре машины собраны, вход по ключу настроен.
+
+  control  10.0.2.5   — управляющая машина, здесь мы всё выполняем
+  web1     10.0.2.11  — Ubuntu 26.04 LTS
+  web2     10.0.2.12  — Ubuntu 26.04 LTS
+  db1      10.0.2.13  — Rocky Linux 10
+
+В ~/ansible-lab лежат inventory.ini, ansible.cfg, group_vars и host_vars
+из практик 2 и 5. На web1 и web2 из практики 4 работает apache2,
+на db1 веб-сервера нет: страницу развернём с ключом --limit web.
+Ansible: ansible-core 2.19 (пакет Ansible community 12.x) в ~/ansible-venv.
+
+ФАЙЛЫ ИЗ КАТАЛОГА КУРСА лежат в files/06_facts_templates:
+
+  * files/06_facts_templates/01_facts.yml           — факты и assert (шаги 1-3)
+  * files/06_facts_templates/02_custom_facts.yml    — настраиваемые факты (шаг 4)
+  * files/06_facts_templates/facts.d/site.fact      — факт в формате INI (шаг 4)
+  * files/06_facts_templates/facts.d/hardware.fact  — факт в формате JSON (шаг 4)
+  * files/06_facts_templates/03_index_template.yml  — страница сайта (шаг 8)
+  * files/06_facts_templates/templates/index.j2     — шаблон страницы (шаг 8)
+  * files/06_facts_templates/04_motd.yml            — /etc/motd (шаг 9)
+  * files/06_facts_templates/templates/motd.j2      — шаблон motd (шаг 9)
+  * files/06_facts_templates/05_hostvars.yml        — hostvars и фильтры (шаг 10)
+  * files/06_facts_templates/README.md              — что это за файлы
+
+Строки с путями длиннее 78 символов намеренно: это имена файлов.
+ВРЕМЯ: три академических часа. Больше половины уйдёт на шаблоны.
+
+
+#########################################################################
+ЧАСТЬ 1. ФАКТЫ: ЧТО ANSIBLE ЗНАЕТ О МАШИНЕ
+#########################################################################
+
+
+=========================================================================
+ШАГ 1. ОТКУДА БЕРУТСЯ ФАКТЫ
+=========================================================================
+
+ФАКТЫ (facts) — переменные, которые Ansible собирает о машине сам,
+подключаясь к ней по SSH. В начале каждого play он выполняет задачу
+Gathering Facts:
+
+  TASK [Gathering Facts]
+  ok: [web1]
+  ok: [web2]
+  ok: [db1]
+
+Тот же сбор запускается вручную модулем ansible.builtin.setup. Вывод
+большой — около 1300 строк на машину:
+
+  ansible all -m ansible.builtin.setup
+  web1 | SUCCESS => {
+      "ansible_facts": {
+          "ansible_default_ipv4": {
+              "address": "10.0.2.11",
+              "gateway": "10.0.2.1"
+          },
+          "ansible_distribution": "Ubuntu",
+          "ansible_distribution_version": "26.04",
+          "ansible_hostname": "web1",
+          "ansible_memtotal_mb": 1971,
+          "ansible_os_family": "Debian",
+          "ansible_processor_vcpus": 2,
+          ...
+      }
+  }
+
+ВСЕ ФАКТЫ ЛЕЖАТ В ОДНОМ СЛОВАРЕ ansible_facts, и обращаться к ним можно
+двумя способами: длинным ansible_facts['os_family'] и коротким
+ansible_os_family — второе имя Ansible подставляет сам, беря значение
+из того же словаря. Работают обе формы, выбор между ними — вопрос
+стиля: короткую пишем там, где она читается, а форму через словарь —
+там, где имя факта собирается из частей.
+
+ФАКТЫ, НА КОТОРЫЕ ОПИРАЕТСЯ КУРС:
+
+  * ansible_facts['os_family']       — Debian или RedHat: по этому
+    значению выбирается пакет и служба;
+  * ansible_facts['distribution']    — Ubuntu или Rocky;
+  * ansible_facts['distribution_version'] — 26.04 или 10.1;
+  * ansible_facts['hostname']        — имя машины, web1;
+  * ansible_facts['processor_vcpus'] — сколько ядер;
+  * ansible_facts['memtotal_mb']     — сколько памяти, МБ;
+  * ansible_facts['default_ipv4']['address'] — адрес интерфейса.
+
+ПОЧЕМУ ИМЕННО ТАК: факт, а не команда hostname через shell. Команда
+вернёт текст, который придётся разбирать: обрезать перевод строки,
+отделять имя от домена, учитывать разный вывод на Ubuntu и Rocky.
+Факт возвращает готовое значение — строку, число или словарь.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: шаблон конфигурации, набор пакетов по семейству
+ОС и отчёт о парке строятся на фактах, а не на догадках.
+
+ПРОВЕРКА: сохраните факты в файл и поищите по ним:
+
+  ansible web1 -m ansible.builtin.setup > /tmp/facts_web1.txt
+  grep -c '"ansible_' /tmp/facts_web1.txt
+  128
+
+
+=========================================================================
+ШАГ 2. ТОЛЬКО НУЖНЫЕ ФАКТЫ: FILTER И GATHER_SUBSET
+=========================================================================
+
+У ansible.builtin.setup два разных инструмента, и их постоянно путают:
+
+  * filter — что ПОКАЗАТЬ из уже собранного;
+  * gather_subset — что СОБИРАТЬ вообще.
+
+FILTER отбирает факты по имени; звёздочка заменяет любую часть строки:
+
+  ansible all -m ansible.builtin.setup -a "filter=ansible_os_family*"
+  web1 | SUCCESS => {
+      "ansible_facts": {
+          "ansible_os_family": "Debian"
+      }
+  }
+  db1 | SUCCESS => { ... "ansible_os_family": "RedHat" }
+
+Если фильтр совпал с фактом-словарём, возвращается словарь целиком:
+
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_default_ipv4"
+  web1 | SUCCESS => {
+      "ansible_facts": {
+          "ansible_default_ipv4": {
+              "address": "10.0.2.11",
+              "interface": "enp0s3",
+              ...
+          }
+      }
+  }
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_memtotal_mb"
+  web1 | SUCCESS => { ... "ansible_memtotal_mb": 1971 ... }
+
+ВАЖНО: filter не ускоряет работу. Модуль всё равно собирает весь набор
+фактов и лишь отбрасывает лишнее при печати: экономится ваше время
+на чтение вывода, но не время прогона.
+
+GATHER_SUBSET задаёт, какие НАБОРЫ собирать: distribution, network,
+hardware, virtual, local, processor, mounts и другие. Восклицательный
+знак означает «не собирать»:
+
+  ansible all -m ansible.builtin.setup -a "gather_subset=network"
+  ...факты о сети плюс минимальный набор
+
+  ansible all -m ansible.builtin.setup -a "gather_subset=!all"
+  ...только минимальный набор: distribution, dns, env, local, platform
+
+  ansible all -m ansible.builtin.setup -a "gather_subset=!all,!min,local"
+  ...ровно один набор: настраиваемые факты из /etc/ansible/facts.d
+
+В плейбуке то же самое — параметром модуля setup:
+
+  - name: Собрать только сетевые факты
+    ansible.builtin.setup:
+      gather_subset:
+        - "!all"
+        - "!min"
+        - network
+
+ПОЧЕМУ ИМЕННО ТАК: наборы, а не отдельные имена. Сбор идёт
+коллекторами: чтобы получить адрес, коллектор network собирает
+и интерфейсы, и маршруты, и соседей по ARP. Выбрать из набора один факт
+можно только фильтром, то есть уже после сбора.
+
+ЧЕГО НЕ ДЕЛАТЬ: не добывайте факты командой shell. Запись вида
+ansible.builtin.command с командой cat /proc/meminfo работает, но её
+результат — текст: он не станет числом, не будет доступен в шаблоне
+как словарь и развалится при смене формата вывода.
+
+ПРОВЕРКА: разница видна счётчиком строк:
+
+  ansible db1 -m ansible.builtin.setup -a "filter=ansible_os_family*" | wc -l
+  10
+  ansible db1 -m ansible.builtin.setup | wc -l
+  1327
+
+
+=========================================================================
+ШАГ 3. DEBUG И ASSERT: ПРОВЕРКА ПРЕДПОЛОЖЕНИЙ О ХОСТЕ
+=========================================================================
+
+ansible.builtin.debug печатает то, что вы ему дали: msg — строку,
+var — значение переменной со всеми типами. ansible.builtin.assert
+проверяет условие и останавливает задачу, если условие ложно.
+Запишем оба модуля в плейбук 01_facts.yml:
+
+  ---
+  # Практика 6, шаги 1-3: выбранные факты и проверка предположений о машине.
+  # Запуск: ansible-playbook 01_facts.yml
+
+  - name: Показать выбранные факты стенда
+    hosts: linux
+    gather_facts: true
+    tasks:
+      - name: Показать сводку по машине
+        ansible.builtin.debug:
+          msg:
+            - "Хост инвентаря: {{ inventory_hostname }}"
+            - "Имя машины: {{ ansible_facts['hostname'] }}"
+            - "Семейство ОС: {{ ansible_facts['os_family'] }}"
+            - "Дистрибутив: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+            - "Ядер: {{ ansible_facts['processor_vcpus'] }}"
+            - "Память, МБ: {{ ansible_facts['memtotal_mb'] }}"
+            - "Основной адрес: {{ ansible_facts['default_ipv4']['address'] }}"
+
+      - name: Показать те же значения короткими именами
+        ansible.builtin.debug:
+          msg: >-
+            {{ ansible_hostname }}: {{ ansible_os_family }},
+            {{ ansible_distribution }} {{ ansible_distribution_version }},
+            {{ ansible_processor_vcpus }} ядра, {{ ansible_memtotal_mb }} МБ,
+            {{ ansible_default_ipv4.address }}
+
+  - name: Проверить предположения о машине
+    hosts: linux
+    gather_facts: true
+    tasks:
+      - name: Убедиться, что семейство ОС входит в список поддерживаемых
+        ansible.builtin.assert:
+          that:
+            - ansible_facts['os_family'] in ['Debian', 'RedHat']
+          success_msg: "Семейство {{ ansible_facts['os_family'] }} поддерживается"
+          fail_msg: "Семейство {{ ansible_facts['os_family'] }} в курсе не поддерживается"
+
+      - name: Убедиться, что машине хватает ресурсов стенда
+        ansible.builtin.assert:
+          that:
+            - ansible_facts['memtotal_mb'] | int >= 1024
+            - ansible_facts['processor_vcpus'] | int >= 1
+          success_msg: "Ресурсов хватает: {{ ansible_facts['memtotal_mb'] }} МБ, {{ ansible_facts['processor_vcpus'] }} ядра"
+          fail_msg: "Машине не хватает ресурсов: {{ ansible_facts['memtotal_mb'] }} МБ"
+
+Запускаем:
+
+  ansible-playbook 01_facts.yml
+  TASK [Показать сводку по машине]
+  ok: [web1] => {
+      "msg": [
+          "Хост инвентаря: web1",
+          "Семейство ОС: Debian",
+          "Дистрибутив: Ubuntu 26.04",
+          ...
+          "Основной адрес: 10.0.2.11"
+      ]
+  }
+  ok: [db1] => { ... "Семейство ОС: RedHat" ... "Дистрибутив: Rocky 10.1" ... }
+  TASK [Убедиться, что семейство ОС входит в список поддерживаемых]
+  ok: [web1] => { "msg": "Семейство Debian поддерживается" }
+  ok: [db1] => { "msg": "Семейство RedHat поддерживается" }
+  PLAY RECAP
+  web1  : ok=6  changed=0  unreachable=0  failed=0
+
+changed=0: печать и проверка ничего не меняют. Шесть задач ok — это два
+сбора фактов и четыре задачи в двух play. Запись msg: >- — свёрнутый
+блок YAML: несколько строк превращаются в одну строку текста.
+
+ПОЧЕМУ ИМЕННО ТАК: assert, а не проверка глазами по выводу debug.
+На парке из трёхсот машин вывод построчно никто не читает: проверка
+должна быть в плейбуке, и тогда неподходящая машина останавливает
+прогон на себе.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: assert записывает требование к машине
+в исполняемом виде. «Не меньше гигабайта памяти», «семейство ОС
+из списка поддерживаемых» — это дешевле проверить до первой задачи,
+чем разбирать отказ на десятой.
+
+ПРОВЕРКА: заведомо ложное условие останавливает задачу. Поменяйте
+в assert список на ['Debian'] и запустите только db1:
+
+  ansible-playbook 01_facts.yml --limit db1
+  fatal: [db1]: FAILED! => {
+      "assertion": "ansible_facts['os_family'] in ['Debian']",
+      "evaluated_to": false,
+      "msg": "Семейство RedHat в курсе не поддерживается"
+  }
+
+Верните список: ['Debian', 'RedHat'].
+
+
+=========================================================================
+ШАГ 4. НАСТРАИВАЕМЫЕ ФАКТЫ: ПОМЕТКА НА МАШИНЕ
+=========================================================================
+
+В фактах нет того, что знает только человек: чей это сервер, какая
+у него роль, какой версии на нём стенд. Для этого есть НАСТРАИВАЕМЫЕ
+ФАКТЫ (local facts). Файл с расширением .fact кладётся на узел
+в каталог /etc/ansible/facts.d, и модуль setup читает его вместе
+с остальными фактами: этот путь — значение по умолчанию, оно же
+параметр fact_path. Формат файла — INI или JSON.
+
+site.fact, формат INI:
+
+  # Настраиваемый факт стенда курса. Формат INI.
+  # Лежит на узле в /etc/ansible/facts.d/ и читается модулем setup.
+  # Доступ к значениям: ansible_local.site.general.<ключ>
+  # (имя файла, затем имя секции, затем имя ключа).
+
+  [general]
+  owner = engineer
+  role = webserver
+  version = 1.0.0
+  stand = ansible-lab
+
+hardware.fact, формат JSON:
+
+  {
+      "model": "VirtualBox",
+      "cpu_cores": 2,
+      "memory_mb": 2048,
+      "purchased": "2026-01-15"
+  }
+
+ЗАЧЕМ ЭТО В РАБОТЕ: имя файла становится именем факта, имя секции —
+вложенным ключом, имя ключа — значением. Машина получает пометку так,
+как удобно организации: ansible_local.site.general даёт владельца, роль
+и версию стенда, ansible_local.hardware — модель и ресурсы. Дальше это
+обычные переменные: в шаблоне, в условии when, в отчёте о парке.
+
+Раскладываем файлы плейбуком 02_custom_facts.yml:
+
+  ---
+  # Практика 6, шаг 4: настраиваемые факты в /etc/ansible/facts.d.
+  # Запуск: ansible-playbook 02_custom_facts.yml
+  #
+  # Два play, а не один: набор фактов собирается в начале play, до задач.
+  # Поэтому факты, положенные первым play, видно только во втором.
+
+  - name: Разложить настраиваемые факты по узлам
+    hosts: linux
+    become: true
+    gather_facts: false
+    tasks:
+      - name: Создать каталог для настраиваемых фактов
+        ansible.builtin.file:
+          path: /etc/ansible/facts.d
+          state: directory
+          owner: root
+          group: root
+          mode: "0755"
+
+      - name: Положить настраиваемые факты site.fact и hardware.fact
+        ansible.builtin.copy:
+          src: "facts.d/{{ item }}"
+          dest: "/etc/ansible/facts.d/{{ item }}"
+          owner: root
+          group: root
+          mode: "0644"
+        loop:
+          - site.fact
+          - hardware.fact
+
+  - name: Показать настраиваемые факты
+    hosts: linux
+    become: false
+    gather_facts: true
+    tasks:
+      - name: Убедиться, что настраиваемый факт прочитан
+        ansible.builtin.assert:
+          that:
+            - ansible_local.site.general.owner is defined
+          success_msg: "Владелец машины из site.fact: {{ ansible_local.site.general.owner }}"
+          fail_msg: "Настраиваемый факт не прочитан: проверьте /etc/ansible/facts.d на узле"
+
+      - name: Показать значения настраиваемых фактов
+        ansible.builtin.debug:
+          msg:
+            - "Файл site.fact (INI), секция general:"
+            - "  владелец: {{ ansible_local.site.general.owner }}"
+            - "  роль: {{ ansible_local.site.general.role }}"
+            - "  версия стенда: {{ ansible_local.site.general.version }}"
+            - "Файл hardware.fact (JSON), ключи верхнего уровня:"
+            - "  модель: {{ ansible_local.hardware.model }}"
+            - "  ядер: {{ ansible_local.hardware.cpu_cores }}"
+            - "  память, МБ: {{ ansible_local.hardware.memory_mb }}"
+            - "  куплена: {{ ansible_local.hardware.purchased }}"
+
+В первом play стоит gather_facts: false: факты в нём не нужны, а сбор
+стоит времени. Второй play собирает факты заново — уже после того, как
+файлы легли на место.
+
+ВАЖНО: НАБОР ФАКТОВ СОБИРАЕТСЯ В НАЧАЛЕ PLAY, ДО ЗАДАЧ. Если положить
+файл факта задачей и в том же play прочитать ansible_local, там будет
+пусто. Поэтому в плейбуке два play. Тот же результат даёт задача
+ansible.builtin.setup в середине play, но два play читаются понятнее.
+Каталог facts.d из files/06_facts_templates — только заготовка: на узле
+файлы должны лежать ровно в /etc/ansible/facts.d.
+
+Проверяем:
+
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
+  web1 | SUCCESS => {
+      "ansible_facts": {
+          "ansible_local": {
+              "hardware": {
+                  "cpu_cores": 2,
+                  "model": "VirtualBox",
+                  ...
+              },
+              "site": {
+                  "general": {
+                      "owner": "engineer",
+                      "role": "webserver",
+                      "version": "1.0.0"
+                  }
+              }
+          }
+      }
+  }
+
+У site два уровня: сначала имя файла site, потом имя секции general.
+У JSON-файла уровень один: имя файла hardware — и сразу ключи.
+
+ПРОВЕРКА: значения из INI всегда строки, из JSON сохраняют тип:
+
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_local" \
+      | grep -E 'cpu_cores|"version"'
+                  "cpu_cores": 2,
+                      "version": "1.0.0",
+
+Два без кавычек, "1.0.0" в кавычках: если будете сравнивать значение
+с числом, помните об этом.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: настраиваемый факт — самый дешёвый способ связать
+машину с учётной системой или проектом. Файл можно положить образом
+виртуальной машины, выдать провижинингом или записать одной задачей
+Ansible; читается он как любой другой факт, а пометки «владелец»,
+«среда», «версия» в крупном парке значат больше характеристик железа.
+
+
+=========================================================================
+ШАГ 5. ВОЛШЕБНЫЕ ПЕРЕМЕННЫЕ
+=========================================================================
+
+Кроме фактов Ansible даёт переменные, которые описывают сам прогон.
+Их называют волшебными (magic variables): они есть всегда, их не нужно
+определять и нельзя переопределить через group_vars.
+
+  * inventory_hostname       — имя машины из инвентаря. Именно оно,
+    а не ansible_facts['hostname']: системное имя может быть другим;
+  * inventory_hostname_short — то же имя до первой точки;
+  * ansible_play_hosts       — список машин текущего прогона; при
+    --limit он короче полного списка;
+  * hostvars                 — переменные всех машин инвентаря;
+  * groups                   — словарь групп: имя группы, список машин;
+  * group_names              — список групп, в которые входит машина;
+  * inventory_dir            — каталог с инвентарём;
+  * ansible_check_mode       — true, если прогон идёт с --check;
+  * ansible_forks            — сколько машин обрабатывается параллельно.
+
+Живые примеры — где я, кто мои соседи, откуда взят инвентарь:
+
+  ansible web1 -m ansible.builtin.debug \
+      -a "msg={{ inventory_hostname }} {{ inventory_dir }}"
+  web1 | SUCCESS => {
+      "msg": "web1 /home/engineer/ansible-lab"
+  }
+
+  ansible linux -m ansible.builtin.debug -a "msg={{ group_names }}"
+  web1 | SUCCESS => { ... "msg": ["web", "debian", "linux"] }
+  db1  | SUCCESS => { ... "msg": ["db", "redhat", "linux"] }
+
+  ansible web1 -m ansible.builtin.debug \
+      -a "msg={{ hostvars['web2']['ansible_host'] }}"
+  web1 | SUCCESS => {
+      "msg": "10.0.2.12"
+  }
+
+ПОЧЕМУ ИМЕННО ТАК: в примерах нет ни одного факта, и это не случайность.
+Команда ansible не собирает факты — она выполняет один модуль
+и завершается. Поэтому в ad-hoc командах доступны только переменные
+инвентаря, а собранные факты не сохраняются для следующей команды.
+Всё, что требует фактов, живёт в плейбуках с gather_facts или setup.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: волшебные переменные превращают плейбук для одной
+машины в плейбук для парка. inventory_hostname даёт уникальное имя
+файла, groups — список соседей, hostvars — их адреса, inventory_dir —
+путь к инвентарю для отчёта.
+
+ЧЕГО НЕ ДЕЛАТЬ: не переопределяйте волшебные переменные. Запись
+inventory_hostname: "web-server" в group_vars не сработает и запутает:
+значение берётся из инвентаря. Нужно другое имя — заводите свою
+переменную, например lab_display_name.
+
+
+=========================================================================
+ШАГ 6. JINJA2: ПОДСТАНОВКА, ЦИКЛЫ, ФИЛЬТРЫ, ТЕСТЫ
+=========================================================================
+
+Jinja2 — язык шаблонов, на котором Ansible собирает текст из данных.
+Он встречается в значении параметра, в шаблоне файла и в условии when
+(там без фигурных скобок — об этом в практике 7).
+
+ЧЕТЫРЕ КОНСТРУКЦИИ, ИЗ КОТОРЫХ СОСТОИТ ПОЧТИ ВСЁ:
+
+  * {{ выражение }} — подставить значение;
+  * {% for ... %} ... {% endfor %} — повторять кусок текста;
+  * {% if ... %} ... {% endif %} — включить текст по условию;
+  * {# комментарий #} — комментарий, в результат не попадает.
+
+ВНУТРИ {{ }} РАБОТАЮТ ФИЛЬТРЫ: знак | отделяет значение от фильтра,
+как конвейер в оболочке.
+
+  * default('значение') — подставить значение, если переменной нет.
+    Самый нужный фильтр в шаблонах: он превращает ошибку «переменная
+    не определена» в понятную строку;
+  * upper / lower       — регистр;
+  * join(', ')          — склеить список в строку;
+  * length              — сколько элементов в списке или строке;
+  * to_nice_json        — показать данные как аккуратный JSON;
+  * b64encode           — base64 для API, которым нужны «безопасные»
+    символы. Это кодирование, а не шифрование: пароли так не прячут;
+  * map('фильтр')       — применить фильтр к каждому элементу списка.
+
+ТЕСТЫ — проверки, дающие true или false: is defined, is not none,
+is file, is directory. Посмотрим их в деле — это последняя задача
+плейбука 05_hostvars.yml, который мы напишем целиком в шаге 10:
+
+  - name: Показать фильтры и тесты Jinja2 на данных инвентаря
+    ansible.builtin.debug:
+      msg:
+        - "upper: {{ ansible_os_family | upper }}"
+        - "length: {{ groups['linux'] | length }}"
+        - "join: {{ groups['linux'] | join(' + ') }}"
+        - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
+        - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
+        - "b64encode: {{ 'engineer' | b64encode }}"
+        - "default: {{ lab_owner | default('не назначен') }}"
+        - "is defined: {{ ansible_local.site.general.owner is defined }}"
+        - "is not none: {{ ansible_processor_vcpus is not none }}"
+        - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"
+
+  ansible-playbook 05_hostvars.yml
+  TASK [Показать фильтры и тесты Jinja2 на данных инвентаря]
+  ok: [web1] => {
+      "msg": [
+          "upper: DEBIAN",
+          "length: 3",
+          "join: web1 + web2 + db1",
+          "map: WEB1, WEB2, DB1",
+          "to_nice_json: [\n    \"web1\",\n    \"web2\",\n    \"db1\"\n]",
+          "b64encode: ZW5naW5lZXI=",
+          "default: ivan",
+          "is defined: true",
+          "is not none: true",
+          "is file (на управляющей машине): true"
+      ]
+  }
+  ok: [db1] => { ... "default: не назначен" ... }
+
+default: ivan у web1 и default: не назначен у остальных: lab_owner взят
+из group_vars/all.yml, а у web1 переопределён в host_vars/web1.yml —
+тот же опыт, что в практике 2, но теперь он виден в плейбуке.
+
+ВАЖНО: ТЕСТ is file ВЫПОЛНЯЕТСЯ НА УПРАВЛЯЮЩЕЙ МАШИНЕ, потому что
+шаблон разбирается там, где запущен Ansible. Совпадение с узлом здесь
+случайное: на обеих машинах есть /etc/hosts. Проверять файл на узле
+нужно модулем ansible.builtin.stat и результатом в register — это
+практика 8. Правило: Jinja2 работает с данными, а данные о файлах узла
+приносит модуль.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: фильтр default отличает рабочий шаблон
+от учебного. Любая переменная, которую может не задать group_vars,
+получает разумное значение: шаблон не падает, а печатает «не
+назначено», «порт по умолчанию 80», «окружение не указано».
+
+ПРОВЕРКА:
+
+  ansible web1 -m ansible.builtin.debug -a "msg={{ groups['linux'] | length }}"
+  web1 | SUCCESS => { "msg": "3" }
+
+Результат — строка "3", а не число: debug печатает готовый текст.
+
+
+#########################################################################
+ЧАСТЬ 2. ОТ ДАННЫХ К ФАЙЛАМ: ШАБЛОНЫ
+#########################################################################
+
+
+=========================================================================
+ШАГ 7. TEMPLATE ПРОТИВ COPY: ПОЧЕМУ ШАБЛОН, А НЕ SED
+=========================================================================
+
+Три модуля кладут файл на узел, и разница в том, откуда берётся
+содержимое: ansible.builtin.copy переносит готовый файл как есть,
+ansible.builtin.template подставляет значения переменных и кладёт
+результат, ansible.builtin.lineinfile меняет одну строку в файле
+(это практика 8).
+
+До сих пор страница сайта была одинаковой на всех машинах. Теперь
+на каждой своё имя, свой адрес и свой владелец. Соблазн — скопировать
+файл и дописать нужное через sed:
+
+  - name: Подставить имя машины
+    ansible.builtin.shell: >
+      sed -i "s/HOSTNAME/{{ inventory_hostname }}/" /var/www/html/index.html
+
+ПОЧЕМУ ЭТО ПЛОХО, хотя и работает:
+
+  * sed не идемпотентен: первый прогон заменил HOSTNAME, второй его
+    не находит, а другой рисунок замены сработает повторно. Задача
+    каждый раз показывает changed;
+  * shell обходит проверку синтаксиса: Ansible не знает, что делает
+    эта строка;
+  * слэш, амперсанд или кавычка в значении ломают выражение sed,
+    а приходят они из данных;
+  * у shell нет --diff, поэтому изменение не видно заранее;
+  * набор sed-команд растёт с каждой новой переменной, и порядок замен
+    становится важен.
+
+Шаблон не подставляет текст в готовый файл — он СТРОИТ файл из данных:
+
+  - name: Разложить главную страницу из шаблона
+    ansible.builtin.template:
+      src: templates/index.j2
+      dest: /var/www/html/index.html
+      owner: root
+      group: root
+      mode: "0644"
+      backup: true
+
+Параметры те же, что у copy: у модулей общий набор для работы
+с файлами. Отличий два: src указывает на шаблон (относительный путь
+ищется в каталоге templates/ рядом с плейбуком), а backup: true
+сохраняет прежний файл рядом.
+
+Проверка идемпотентности — то, ради чего всё и делается:
+
+  ansible-playbook 03_index_template.yml --limit web
+  TASK [Разложить главную страницу из шаблона]
+  changed: [web1]
+  changed: [web2]
+  ansible-playbook 03_index_template.yml --limit web
+  TASK [Разложить главную страницу из шаблона]
+  ok: [web1]
+  ok: [web2]
+
+Второй прогон ничего не меняет: Ansible сравнивает готовый результат,
+а не команды. Посмотреть изменение заранее позволяют флаги --check
+и --diff; пример с diff — в шаге 8.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: шаблон — тоже код, у него есть версия и история
+правок. Вопрос «почему на этой машине конфигурация другая» решается
+чтением шаблона и group_vars, а не заходом на машину. Поэтому
+в реальных ролях конфигурации раскладывают шаблонами, а sed
+и lineinfile оставляют для точечных правок чужих файлов.
+
+ЧЕГО НЕ ДЕЛАТЬ: не выставляйте шаблону права «понадёжнее».
+mode: "0555" на страницу сайта делает её исполняемой и снимает бит
+записи. Страница — это 0644, каталог — 0755.
+
+ПРОВЕРКА: файл на узле — результат подстановки, а не копия шаблона:
+
+  ssh engineer@web1 'grep -c "{{" /var/www/html/index.html'
+  0
+
+Ноль означает, что в готовом файле не осталось фигурных скобок.
+
+
+=========================================================================
+ШАГ 8. ШАБЛОН INDEX.J2: СТРАНИЦА С ФАКТАМИ
+=========================================================================
+
+Плейбук 03_index_template.yml целиком:
+
+  ---
+  # Практика 6, шаг 8: главная страница сайта из шаблона Jinja2.
+  # На db1 страница не нужна: там нет веб-сервера, поэтому запускаем
+  # с ограничением по группе web:
+  #   ansible-playbook 03_index_template.yml --limit web
+  # Условие when, которое уберёт --limit, появится в практике 7.
+
+  - name: Развернуть главную страницу сайта
+    hosts: linux
+    become: true
+    gather_facts: true
+    vars:
+      site_title: "Учебный стенд курса Ansible"
+      site_owner_default: "не назначен"
+    tasks:
+      - name: Создать каталог сайта
+        ansible.builtin.file:
+          path: /var/www/html
+          state: directory
+          owner: root
+          group: root
+          mode: "0755"
+
+      - name: Разложить главную страницу из шаблона
+        ansible.builtin.template:
+          src: templates/index.j2
+          dest: /var/www/html/index.html
+          owner: root
+          group: root
+          mode: "0644"
+          backup: true
+
+В плейбуке описано намерение «у всех linux-машин есть каталог сайта»,
+а --limit web — решение этого прогона. Без него страница легла бы
+и на db1, где её никто не отдаёт. Шаблон templates/index.j2:
+
+  <!DOCTYPE html>
+  <html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ site_title | default('Учебный стенд курса Ansible') }} — {{ inventory_hostname }}</title>
+  </head>
+  <body>
+    <h1>Машина {{ inventory_hostname }}</h1>
+    <p>{{ ansible_managed }}</p>
+
+    <table border="1">
+      <tr><th>Имя машины</th><td>{{ ansible_facts['hostname'] }}</td></tr>
+      <tr><th>Адрес</th><td>{{ ansible_facts['default_ipv4']['address'] }}</td></tr>
+      <tr><th>Семейство ОС</th><td>{{ ansible_facts['os_family'] }}</td></tr>
+      <tr><th>Дистрибутив</th><td>{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}</td></tr>
+      <tr><th>Ядер</th><td>{{ ansible_facts['processor_vcpus'] }}</td></tr>
+      <tr><th>Память, МБ</th><td>{{ ansible_facts['memtotal_mb'] }}</td></tr>
+      <tr><th>Владелец машины</th><td>{{ ansible_local.site.general.owner | default(site_owner_default) }}</td></tr>
+      <tr><th>Роль машины</th><td>{{ ansible_local.site.general.role | default('не назначена') }}</td></tr>
+    </table>
+
+    <h2>Машины парка</h2>
+    <ul>
+  {% for host in groups['linux'] %}
+      <li>{{ host }} — {{ hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') }}</li>
+  {% endfor %}
+    </ul>
+
+    <p>Группы этой машины: {{ group_names | join(', ') }}</p>
+    <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_date_time.iso8601 }}</p>
+  </body>
+  </html>
+
+Три строки, ради которых шаблон и написан. {{ inventory_hostname }}
+в заголовке — имя машины из инвентаря. {{ ansible_facts['default_ipv4']
+['address'] }} — адрес: сначала словарь по ключу default_ipv4, потом
+из него ключ address. {{ ansible_local.site.general.owner |
+default(site_owner_default) }} — владелец из настраиваемого факта,
+а если факта нет, значение переменной из плейбука.
+
+Запускаем и смотрим результат:
+
+  ansible-playbook 03_index_template.yml --limit web
+  TASK [Разложить главную страницу из шаблона]
+  changed: [web1]
+  changed: [web2]
+  PLAY RECAP
+  web1  : ok=3  changed=1  unreachable=0  failed=0
+
+  curl -s http://web1/ | grep -E 'h1|Адрес|Семейство|Владелец|Роль'
+      <h1>Машина web1</h1>
+      <tr><th>Адрес</th><td>10.0.2.11</td></tr>
+      <tr><th>Семейство ОС</th><td>Debian</td></tr>
+      <tr><th>Владелец машины</th><td>engineer</td></tr>
+      <tr><th>Роль машины</th><td>webserver</td></tr>
+
+На web2 те же строки, но имя и адрес другие:
+
+  curl -s http://web2/ | grep -E 'h1|Адрес'
+      <h1>Машина web2</h1>
+      <tr><th>Адрес</th><td>10.0.2.12</td></tr>
+
+Теперь посмотрим изменение, не меняя ничего на узле, — передадим другой
+заголовок через --extra-vars:
+
+  ansible-playbook 03_index_template.yml --limit web1 \
+      -e site_title="Стенд курса Ansible" --check --diff
+  TASK [Разложить главную страницу из шаблона]
+  --- before: /var/www/html/index.html
+  +++ after: /var/www/html/index.html
+  @@ -3,7 +3,7 @@
+  -  <title>Учебный стенд курса Ansible — web1</title>
+  +  <title>Стенд курса Ansible — web1</title>
+
+Строка со знаком минус была, строка со знаком плюс станет. Флаг
+--check ничего не меняет: файл на узле остался прежним. Значение
+site_title пришло из --extra-vars и перекрыло переменную из vars
+плейбука — приоритет переменных разбирался в практике 5.
+
+ВАЖНО: В СПИСКЕ МАШИН БУДЕТ СТРОКА «db1 — адрес неизвестен». Цикл
+идёт по groups['linux'], то есть по всем трём машинам, а факты собраны
+только у web1 и web2: они и только они попали в прогон из-за --limit
+web. Фильтр default поймал отсутствующее значение и подставил текст.
+Разбор этой ловушки — в разделе «Если что-то пошло не так».
+
+ЧЕГО НЕ ДЕЛАТЬ: не оставляйте в шаблоне пустых заглушек. Строка
+img src="" в готовом файле — это запрос к несуществующему адресу:
+сервер отвечает 404, а браузер тянет страницу медленнее. Нет картинки —
+нет тега; адрес приходит из переменной — ставьте фильтр default.
+
+ПРОВЕРКА: страница на db1 не создана — значит, --limit сработал:
+
+  ansible db1 -m ansible.builtin.stat -a "path=/var/www/html/index.html"
+  db1 | SUCCESS => { ... "stat": { "exists": false } }
+
+
+=========================================================================
+ШАГ 9. ШАБЛОН MOTD.J2: ЦИКЛ ПО GROUPS['LINUX']
+=========================================================================
+
+Второй шаблон показывает то, чего у страницы не было: цикл и данные
+других машин. /etc/motd — текст, который показывают при входе по SSH.
+
+Плейбук 04_motd.yml:
+
+  ---
+  # Практика 6, шаг 9: /etc/motd из шаблона с циклом по группе linux.
+  # Запуск: ansible-playbook 04_motd.yml
+
+  - name: Положить /etc/motd из шаблона
+    hosts: linux
+    become: true
+    gather_facts: true
+    tasks:
+      - name: Разложить /etc/motd
+        ansible.builtin.template:
+          src: templates/motd.j2
+          dest: /etc/motd
+          owner: root
+          group: root
+          mode: "0644"
+
+Шаблон templates/motd.j2:
+
+  {{ ansible_managed }}
+  Учебный стенд курса Ansible: машины группы linux
+  -------------------------------------------------------------------------
+  {% for host in groups['linux'] %}
+  {% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
+  {% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+  {{ '%-8s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
+  {% endfor %}
+  -------------------------------------------------------------------------
+  Всего машин: {{ groups['linux'] | length }}
+  Эта машина: {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
+  Владелец машины: {{ ansible_local.site.general.owner | default('не назначен') }}
+
+{% for host in groups['linux'] %} — начало цикла: список из трёх имён,
+тело выполняется три раза. Вывод одинаков на всех машинах, потому что
+список берётся из инвентаря, а не из фактов текущего узла: motd —
+сводка о парке, а не о машине.
+
+{% set address = ... %} — переменная внутри шаблона, чтобы не повторять
+длинное выражение. Значение берётся из hostvars по имени машины,
+а фильтр default подстрахует, если факта нет — например, при прогоне
+с --limit по части машин. {{ '%-8s' | format(host) }} — выравнивание
+по столбцам: фильтр format работает как форматирование строки в Python.
+
+Посмотрим результат:
+
+  ansible-playbook 04_motd.yml
+  TASK [Разложить /etc/motd]
+  changed: [web1]
+  changed: [web2]
+  changed: [db1]
+
+  ssh engineer@web1 cat /etc/motd
+  Ansible managed
+  Учебный стенд курса Ansible: машины группы linux
+  -------------------------------------------------------------------------
+  web1     10.0.2.11        Debian
+  web2     10.0.2.12        Debian
+  db1      10.0.2.13        RedHat
+  -------------------------------------------------------------------------
+  Всего машин: 3
+  Эта машина: web1 (10.0.2.11)
+  Владелец машины: engineer
+
+Файл на web1 и на db1 отличается только строкой «Эта машина». Первая
+строка, Ansible managed, — значение переменной ansible_managed: подсказка
+человеку, что файл собран автоматически и правки затрутся прогоном.
+
+ПОЧЕМУ ИМЕННО ТАК: цикл в шаблоне, а не три строки в файле. Приедет
+четвёртый узел — шаблон подхватит его сам, потому что читает groups,
+а не текст. И число в строке «Всего машин» руками не напишешь: оно
+берётся из данных — {{ groups['linux'] | length }}.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: шаблон, собирающий из hostvars сводку о машинах, —
+заготовка отчёта о парке. Тот же приём с выводом в файл на управляющей
+машине применяют, когда нужен регулярный отчёт; в практике 14 к этому
+добавятся delegate_to и run_once.
+
+ВАЖНО: НА UBUNTU ЧАСТЬ СООБЩЕНИЯ ПРИ ВХОДЕ СОБИРАЕТСЯ НЕ ИЗ ЭТОГО
+ФАЙЛА. Скрипты из /etc/update-motd.d пишут свои строки, а pam_motd
+показывает и их, и /etc/motd. Если /etc/motd оказался символической
+ссылкой, модуль template заменит её обычным файлом.
+
+ПРОВЕРКА: второй прогон даёт changed=0. Если changed=1 каждый раз,
+значит, в шаблоне есть меняющееся значение — например, время.
+
+
+=========================================================================
+ШАГ 10. HOSTVARS, GROUPS, GROUP_NAMES: ДАННЫЕ ОБО ВСЁМ ПАРКЕ
+=========================================================================
+
+Волшебные переменные мы назвали в шаге 5, но не запускали. Плейбук
+05_hostvars.yml целиком — он же используется в шаге 6:
+
+  ---
+  # Практика 6, шаг 10: волшебные переменные, hostvars и данные обо всём парке.
+  # Запуск: ansible-playbook 05_hostvars.yml
+  #
+  # Опыт с ограничением по машинам: ansible-playbook 05_hostvars.yml --limit db1
+  # Тогда факты web2 в hostvars не собраны, и задача «Показать адрес web2»
+  # падает с ошибкой про undefined. Это разобрано в практике, в разделе
+  # «Если что-то пошло не так».
+
+  - name: Показать, что Ansible знает о машине и о парке
+    hosts: linux
+    gather_facts: true
+    tasks:
+      - name: Показать переменные о самой машине
+        ansible.builtin.debug:
+          msg:
+            - "inventory_hostname: {{ inventory_hostname }}"
+            - "inventory_hostname_short: {{ inventory_hostname_short }}"
+            - "group_names: {{ group_names | join(', ') }}"
+            - "inventory_dir: {{ inventory_dir }}"
+            - "ansible_check_mode: {{ ansible_check_mode }}"
+            - "Хостов в текущем прогоне: {{ ansible_play_hosts | length }}"
+
+      - name: Показать группы инвентаря
+        ansible.builtin.debug:
+          msg:
+            - "web: {{ groups['web'] | join(', ') }}"
+            - "db: {{ groups['db'] | join(', ') }}"
+            - "linux: {{ groups['linux'] | join(', ') }}"
+            - "debian: {{ groups['debian'] | join(', ') }}"
+            - "redhat: {{ groups['redhat'] | join(', ') }}"
+
+      - name: Собрать адреса всего парка из hostvars
+        ansible.builtin.debug:
+          msg: "{{ item }}: {{ hostvars[item]['ansible_default_ipv4']['address'] | default('фактов нет') }}"
+        loop: "{{ groups['linux'] }}"
+
+      - name: Показать адрес web2, глядя с этой машины
+        ansible.builtin.debug:
+          msg: "web2: {{ hostvars['web2']['ansible_default_ipv4']['address'] }}"
+
+      - name: Показать фильтры и тесты Jinja2 на данных инвентаря
+        ansible.builtin.debug:
+          msg:
+            - "upper: {{ ansible_os_family | upper }}"
+            - "length: {{ groups['linux'] | length }}"
+            - "join: {{ groups['linux'] | join(' + ') }}"
+            - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
+            - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
+            - "b64encode: {{ 'engineer' | b64encode }}"
+            - "default: {{ lab_owner | default('не назначен') }}"
+            - "is defined: {{ ansible_local.site.general.owner is defined }}"
+            - "is not none: {{ ansible_processor_vcpus is not none }}"
+            - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"
+
+Запускаем:
+
+  ansible-playbook 05_hostvars.yml
+  TASK [Показать переменные о самой машине]
+  ok: [web1] => {
+      "msg": [
+          "inventory_hostname: web1",
+          "group_names: web, debian, linux",
+          "inventory_dir: /home/engineer/ansible-lab",
+          "ansible_check_mode: False",
+          "Хостов в текущем прогоне: 3"
+      ]
+  }
+  ok: [db1] => { ... "group_names: db, redhat, linux" ... }
+  TASK [Собрать адреса всего парка из hostvars]
+  ok: [web1] => (item=web1) => { "msg": "web1: 10.0.2.11" }
+  ok: [web1] => (item=web2) => { "msg": "web2: 10.0.2.12" }
+  ok: [web1] => (item=db1) => { "msg": "db1: 10.0.2.13" }
+  TASK [Показать адрес web2, глядя с этой машины]
+  ok: [db1] => { "msg": "web2: 10.0.2.12" }
+
+Строка group_names у web1 — web, debian, linux: готовый ответ
+на вопрос «кто я», и в практике 7 он станет основой условий when.
+
+Проверим режим --check: по переменной ansible_check_mode в шаблоне
+можно, например, не перезапускать службу в холостом прогоне.
+
+  ansible-playbook 05_hostvars.yml --limit web1 --check | grep check_mode
+          "ansible_check_mode: True",
+
+ЧЕГО НЕ ДЕЛАТЬ: не стройте шаблон на hostvars, не проверив, что нужная
+машина есть в прогоне. hostvars знает про все машины инвентаря, но
+факты есть только у машин текущего play. Запустите пример
+с ограничением:
+
+  ansible-playbook 05_hostvars.yml --limit db1
+  TASK [Показать адрес web2, глядя с этой машины]
+  fatal: [db1]: FAILED! => {
+      "msg": "The task includes an option with an undefined variable. ...
+              'dict object' has no attribute 'ansible_default_ipv4' ..."
+  }
+
+Задача про адрес web2 падает на db1, потому что в этом прогоне
+собирались факты только db1. Та же задача внутри цикла не падает: там
+стоит фильтр default. Разница ровно в нём.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: hostvars — единственный способ узнать с машины
+адрес или версию соседа, не подключаясь к соседу. Так собирают
+конфигурацию кластера и отчёт о парке; в практике 14 для отчёта
+понадобится delegate_to.
+
+ПРОВЕРКА: списки совпадают с инвентарём из практики 2:
+
+  ansible-inventory --graph
+  @all:
+    |--@debian:
+    |  |--@web:
+    |  |  |--web1
+    |  |  |--web2
+    ...
+
+Если в groups нет машины, смотрите инвентарь, а не плейбук.
+
+
+=========================================================================
+ШАГ 11. VALIDATE: ПРОВЕРКА ДО ТОГО, КАК ФАЙЛ ПОПАЛ НА МЕСТО
+=========================================================================
+
+У модулей copy и template есть параметр validate: в него передают
+команду проверки, а Ansible подставляет вместо %s путь к временному
+файлу с новым содержимым. Файл проверяют до публикации; не прошёл
+проверку — задача падает, а рабочий файл остаётся прежним.
+
+Классический пример — sudoers: ошибка в этом файле закрывает sudo.
+Файл с правилом (sudoers-lab) лежит рядом с плейбуком.
+
+  - name: Положить правило sudo с проверкой
+    ansible.builtin.copy:
+      src: sudoers-lab
+      dest: /etc/sudoers.d/10-lab-nopass
+      owner: root
+      group: root
+      mode: "0440"
+      validate: "visudo -cf %s"
+
+Второй пример — конфигурация nginx:
+
+  - name: Положить конфигурацию nginx с проверкой
+    ansible.builtin.template:
+      src: templates/nginx.conf.j2
+      dest: /etc/nginx/nginx.conf
+      owner: root
+      group: root
+      mode: "0644"
+      validate: "nginx -t -c %s"
+
+Нюанс: nginx -t проверяет ГЛАВНЫЙ файл конфигурации, а не отдельный
+виртуальный хост. Если конфигурация сайта раскладывается
+в /etc/nginx/conf.d, одной опции validate мало — проверять надо после
+раскладки, вместе с основным nginx.conf. Поэтому основной приём
+практики 12 — validate для целых файлов.
+
+ВАЖНО: %s — НЕ ЗАПОЛНИТЕЛЬ, А МЕСТО ПОДСТАНОВКИ. Если написать
+validate: "nginx -t" без %s, Ansible проверит текущую конфигурацию
+на машине, а не новый файл, и пропустит ошибку.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: validate — способ не отключить себе доступ
+и не остановить службу. Мы вернёмся к нему в практике 8 (sshd_config
+и sshd -t), в практике 9 (sudoers и visudo -cf) и в практике 12.
+
+ПРОВЕРКА: команда проверки должна быть в системе, иначе задача упадёт
+на «command not found»:
+
+  ssh engineer@web1 'command -v visudo'
+  /usr/sbin/visudo
+
+
+=========================================================================
+ШАГ 12. СКОЛЬКО СТОИТ СБОР ФАКТОВ И GATHER_FACTS: FALSE
+=========================================================================
+
+Полный сбор фактов — это не мгновение:
+
+  time ansible all -m ansible.builtin.setup > /dev/null
+  real    0m2.143s
+
+Две секунды на три машины — параллельно. Посчитаем для парка среднего
+размера: триста машин, forks = 10 (значение из нашего ansible.cfg),
+полторы-две секунды на машину:
+
+  300 / 10 * 2 = 60 секунд
+
+Минута только на сбор фактов, и это в каждом прогоне, даже если плейбук
+всего лишь копирует один файл. Поэтому у play есть ключ gather_facts.
+Указывать его явно — хорошая привычка, даже когда значение true:
+
+  - name: Положить статичную страницу
+    hosts: web
+    gather_facts: false
+    tasks:
+      - name: Разложить страницу
+        ansible.builtin.copy:
+          src: index.html
+          dest: /var/www/html/index.html
+          owner: root
+          group: root
+          mode: "0644"
+
+Готовый файл index.html лежит рядом с плейбуком.
+Эта задача не использует фактов: файл готовый, значения
+не подставляются. Значит, сбор здесь не нужен, и gather_facts: false
+экономит минуту на большом парке.
+
+КОГДА GATHER_FACTS: FALSE ЛОМАЕТ ПЛЕЙБУК: как только в задаче
+появляется факт, он перестаёт быть определённым.
+
+  fatal: [web1]: FAILED! => {
+      "msg": "The task includes an option with an undefined variable. ...
+              'ansible_facts' is undefined ..."
+  }
+
+Факты требуются: любому шаблону с ansible_facts или ansible_local,
+условиям when по семейству ОС и версии, выводу адреса, ядер и памяти
+в отчёте, расчёту свободного места.
+
+СРЕДНИЙ ПУТЬ, который чаще всего и нужен: не собирать факты всему
+play, а вызвать setup одной задачей с нужным набором.
+
+  - name: Узнать семейство ОС и адрес
+    ansible.builtin.setup:
+      gather_subset:
+        - "!all"
+        - "!min"
+        - distribution
+        - default_ipv4
+
+ПОЧЕМУ ИМЕННО ТАК: сбор фактов — компромисс между удобством
+и временем. По умолчанию Ansible собирает их всегда, потому что
+неожиданная ошибка «факт не определён» хуже лишней секунды. В рабочем
+плейбуке решение принимает автор.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: на парке из нескольких сотен машин разница между
+полным сбором в каждом play и точечным setup измеряется минутами
+на прогон, а при десяти прогонах в день — часами.
+
+ЕСЛИ ФАКТОВ НУЖНО МНОГО И ПРОГОНОВ ТОЖЕ, в Ansible есть кэш фактов:
+он настраивается в ansible.cfg и хранит собранные факты между
+прогонами. В курсе мы его не включаем: на четырёх машинах пользы нет,
+а ошибки из-за устаревшего кэша вполне реальны. Кэш инвентаря —
+в практике 16.
+
+ПРОВЕРКА:
+
+  time ansible-playbook 01_facts.yml > /dev/null
+  time ansible-playbook 04_motd.yml > /dev/null
+
+Первое дольше: там два play с полным сбором фактов.
+
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+ПРОБЛЕМА: 'dict object' has no attribute 'ansible_distibution'
+
+  fatal: [web1]: FAILED! => {
+      "msg": "The task includes an option with an undefined variable. ...
+              'dict object' has no attribute 'ansible_distibution'. ..."
+  }
+
+В части выпусков то же самое печатается как 'ansible_facts' has no
+attribute 'ansible_distibution' — смысл один: ключа с таким именем
+в словаре нет. Причина в большинстве случаев — опечатка в имени факта.
+
+  1. Сверьте имя по буквам: distribution, а не distibution.
+  2. Есть ли факт на машине:
+
+     ansible web1 -m ansible.builtin.setup -a "filter=ansible_distribution*"
+
+  3. Не смешаны ли длинная и короткая формы: работают
+     ansible_facts['distribution'] и ansible_distribution, а запись
+     ansible_facts.distribution без кавычек — уже ошибка.
+
+ИСПРАВЛЕНО: в прежней версии курса опечатка ansible_distibution —
+без буквы r после disti — стояла в плейбуке с переменными, где факт
+выводился модулем debug. Ansible при этом не падал: он печатал
+«VARIABLE IS NOT DEFINED!», и это сбивало с толку — казалось, что
+факт пропал, хотя дело было в имени. Обе формы записи верны, но
+имя внутри кавычек видно глазом, а имя, склеенное из префикса
+и факта, — нет.
+
+
+ПРОБЛЕМА: VARIABLE IS NOT DEFINED!
+
+  ansible web1 -m ansible.builtin.debug -a "var=lab_owner"
+  web1 | SUCCESS => {
+      "lab_owner": "VARIABLE IS NOT DEFINED!"
+  }
+
+Так модуль debug сообщает, что переменной нет: задача при этом зелёная
+(ok), а не failed.
+
+  1. Опечатка в имени: сравните с тем, что видит Ansible —
+
+     ansible-inventory --host web1 | grep lab_owner
+
+  2. Откуда переменная должна прийти. lab_owner живёт в group_vars
+     из практики 2, поэтому команда должна запускаться
+     из ~/ansible-lab: каталоги group_vars и host_vars Ansible ищет
+     рядом с инвентарём или плейбуком.
+  3. Если переменная берётся из факта — собран ли факт: в ad-hoc
+     командах факты не собираются вообще.
+  4. Если переменная нужна в шаблоне и её может не быть, ставьте
+     фильтр default.
+
+Отдельный случай — та же ошибка в теле задачи, когда hostvars
+обращается к машине, не попавшей в прогон:
+
+  fatal: [db1]: FAILED! => {
+      "msg": "The task includes an option with an undefined variable. ...
+              'dict object' has no attribute 'ansible_default_ipv4' ..."
+  }
+
+Пример разобран в шаге 10: запустите ansible-playbook 05_hostvars.yml
+--limit db1 и посмотрите на задачу про адрес web2.
+
+ВАЖНО: задача, которая берёт факт чужой машины через hostvars, работает
+только пока эта машина есть в списке хостов play. Запустите плейбук
+с --limit db1, и обращение к фактам web2 сорвёт задачу: у машины,
+не попавшей в прогон, факты не собраны, и в ошибке будет стоять
+«'dict object' has no attribute 'ansible_default_ipv4'». Защита одна —
+фильтр default у каждого значения, которое берётся через hostvars.
+
+
+ПРОБЛЕМА: template error while templating string: ...
+
+  fatal: [web1]: FAILED! => {
+      "changed": false,
+      "msg": "template error while templating string: unexpected end
+              of template. Jinja was looking for the following tags:
+              'endfor' or 'else'. String: ..."
+  }
+
+Jinja2 не смогла разобрать шаблон; файл на узле остаётся прежним.
+Сообщение состоит из трёх частей: «template error while templating
+string», объяснение от Jinja2 и текст шаблона после String:.
+
+  1. Парность конструкций: у {% for %} обязателен {% endfor %},
+     у {% if %} — {% endif %}. Незакрытый цикл — самая частая причина.
+  2. Закрыты ли скобки: {{ ... }} и {% ... %}. Незакрытая скобка ломает
+     шаблон целиком, а не одну строку.
+  3. Нет ли символов, которые Jinja2 понимает по-своему. Для файлов,
+     где фигурные скобки встречаются сами по себе (конфигурации nginx,
+     JavaScript), нужен блок {% raw %} ... {% endraw %} — подробно
+     в практике 12.
+  4. Разберите шаблон на управляющей машине, чтобы увидеть ошибку
+     синтаксиса быстрее (ошибки про неопределённые переменные здесь
+     ожидаемы: у localhost фактов нет):
+
+     ansible localhost -m ansible.builtin.template \
+         -a "src=templates/index.j2 dest=/tmp/check.html"
+
+ИСПРАВЛЕНО: в прежней версии курса шаблон страницы содержал тег
+картинки с пустым адресом — img src="" — и подстановку {{ owner }}
+без фильтра default. Пустой src не ломал шаблон, а {{ owner }} на машине
+без переменной останавливал задачу. В новой версии тег без адреса
+в шаблон не попадает, а каждое необязательное значение идёт через
+фильтр default.
+
+
+ПРОБЛЕМА: Could not find or access '.../templates/index.j2'
+
+  fatal: [web1]: FAILED! => {
+      "changed": false,
+      "msg": "Could not find or access
+              '/home/engineer/ansible-lab/templates/index.j2'
+              on the Ansible Controller."
+  }
+
+Шаблон не найден на управляющей машине: модуль template ищет файл там,
+где запущен Ansible, то есть на control, а не на узле.
+
+  1. Существует ли файл с таким именем и в таком регистре:
+
+     ls -l ~/ansible-lab/templates/
+
+  2. Откуда запущен плейбук: относительный src ищется в каталоге
+     templates/ рядом с плейбуком. Проверьте pwd.
+  3. Правильный ли путь в задаче: src: templates/index.j2 — это файл
+     ~/ansible-lab/templates/index.j2, а src: index.j2 — файл рядом
+     с плейбуком.
+  4. Нет ли лишнего пробела в имени файла (ls -b покажет его):
+
+     ls -b ~/ansible-lab/templates/
+
+ЧЕГО НЕ ДЕЛАТЬ: не путайте два каталога. Готовый файл, который
+переносит модуль copy, лежит в files/, а шаблон Jinja2 — в templates/.
+Если шаблон положить в files/, а в задаче оставить
+src: templates/index.j2, модуль template будет искать его именно
+в templates/ и не найдёт. Договорённость простая: templates/ — для
+шаблонов Jinja2, files/ — для готовых файлов.
+
+
+ПРОБЛЕМА: факт не появился: ansible_local пуст
+
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
+  web1 | SUCCESS => {
+      "ansible_facts": {
+          "ansible_local": {}
+      },
+      "changed": false
+  }
+
+Пустой словарь означает, что Ansible не нашёл ни одного файла
+с расширением .fact.
+
+  1. Каталог и содержимое на узле:
+
+     ssh engineer@web1 'ls -l /etc/ansible/facts.d/'
+
+  2. Расширение файла: читаются только имена, оканчивающиеся на .fact.
+     Файл site.ini, site.conf или site.fact.txt Ansible пропустит молча.
+  3. Каталог именно /etc/ansible/facts.d: файл в /etc/facts.d/
+     не читается. Путь задан значением по умолчанию fact_path, и менять
+     его нужно явно — параметром setup или настройкой ansible.cfg.
+  4. Содержимое файла. При нарушенном формате Ansible предупреждает:
+
+     [WARNING]: error loading facts as JSON or ini - please check content:
+     /etc/ansible/facts.d/site.fact
+
+     Для INI типичная причина — отсутствие строки-секции: без [general]
+     файл не является корректным INI, и configparser его отвергает.
+  5. Собран ли факт в этом play: файл, положенный задачей, виден только
+     после повторного сбора фактов — второй play или задача setup.
+  6. Права на файл: setup ходит на узел пользователем engineer, поэтому
+     файл с правами 0600 и владельцем root прочитан не будет.
+
+ЧЕГО НЕ ДЕЛАТЬ: не берите значение настраиваемого факта по короткому
+пути ansible_local.site.owner, если файл написан в формате INI. Путь
+там на уровень длиннее, и задача упадёт с сообщением, что такого
+атрибута нет, — хотя факт собран и виден в выводе filter=ansible_local.
+Причина не в опечатке, а в формате: в INI имя секции становится ещё
+одним уровнем вложенности. Правильный путь для нашего файла —
+ansible_local.site.general.owner (файл site.fact, секция general, ключ
+owner). Одноуровневый путь ansible_local.<файл>.<ключ> годится только
+для JSON: у нас это ansible_local.hardware.cpu_cores. Дерево целиком
+видно в выводе filter=ansible_local.
+
+
+ПРОБЛЕМА: ERROR! We were unable to read either as JSON nor YAML
+
+  ERROR! We were unable to read either as JSON nor YAML, these are the errors we got from each:
+  JSON: Expecting value: line 1 column 1 (char 0)
+  YAML: while scanning a quoted scalar
+    in "/home/engineer/ansible-lab/01_facts.yml", line 18, column 13
+  found unexpected end of stream
+
+Строка «while scanning a quoted scalar» указывает на незакрытую
+кавычку. Проверяйте по порядку:
+
+  1. Строку и столбец из сообщения: столбец 13 — это место, где кавычка
+     открылась.
+  2. Значения с двоеточием: внутри строки, взятой в кавычки, двоеточие
+     безопасно, без кавычек оно превращает значение в словарь:
+
+     msg: Машина: {{ inventory_hostname }}     — ошибка
+     msg: "Машина: {{ inventory_hostname }}"   — верно
+
+  3. YAML можно проверить без Ansible:
+
+     python3 -c "import yaml,sys; yaml.safe_load(open('01_facts.yml'))"
+
+     Молчание означает, что файл разобран; ошибки PyYAML точнее
+     указывают место.
+
+ИСПРАВЛЕНО: в прежней версии курса в задаче с debug стояла строка
+msg: "Машина {{ inventory_hostname }} — и кавычка не закрывалась.
+Падал весь плейбук, включая задачи, которые к этой строке отношения
+не имеют: YAML разбирается целиком до начала работы. Студент искал
+ошибку в шаблонах, а она была в первой задаче. Правило: сначала
+--syntax-check, потом запуск.
+
+  ansible-playbook 01_facts.yml --syntax-check
+  playbook: 01_facts.yml
+
+
+ПРОБЛЕМА: The destination directory '/var/www/html' is not writable by the current user.
+
+  fatal: [web1]: FAILED! => {
+      "changed": false,
+      "msg": "The destination directory '/var/www/html' is not writable
+              by the current user."
+  }
+
+Каталог /var/www/html принадлежит root, а задача идёт без become.
+
+  1. Есть ли в play (или у задачи) строка become: true:
+
+     ansible-playbook 03_index_template.yml --list-tasks
+
+  2. Кто владелец каталога и какие у него права:
+
+     ssh engineer@web1 'ls -ld /var/www/html'
+     drwxr-xr-x 2 root root 4096 ... /var/www/html
+
+  3. Под каким пользователем идёт задача:
+
+     ansible web1 -m ansible.builtin.command -a "id -un"
+     engineer
+     ansible web1 -b -m ansible.builtin.command -a "id -un"
+     root
+
+  4. Не выставлены ли на каталог права без записи: 0555 или 0444
+     запрещают запись всем, кроме root.
+
+ИСПРАВЛЕНО: в прежней версии курса содержимое сайта раскладывалось
+с mode=0555 — страница становилась исполняемой, а бит записи снимался
+и с файла, и с каталога. Ошибка выглядела так же, и её «лечили»
+командой sudo chmod -R 0777 /var/www/html, то есть снимали ограничения
+со всего каталога вместо разбора причины. В новой версии у сайта ровно
+два значения: каталог 0755, страница 0644. Исполняемый бит у HTML-файла
+не нужен, а снятый бит записи мешает обновлять страницу без root.
+
+
+=========================================================================
+ПРОВЕРКА РЕЗУЛЬТАТА
+=========================================================================
+
+Практика выполнена, если выполняются все пункты.
+
+1. Факты видны и по ним понятно, что за машина:
+
+     ansible all -m ansible.builtin.setup -a "filter=ansible_os_family*"
+     web1 | SUCCESS => { ... "ansible_os_family": "Debian" }
+     db1  | SUCCESS => { ... "ansible_os_family": "RedHat" }
+
+2. Разница между filter и gather_subset усвоена: первый отбирает
+   вывод, второй — сбор:
+
+     ansible web1 -m ansible.builtin.setup -a "gather_subset=!all,!min,local" | wc -l
+     ansible web1 -m ansible.builtin.setup | wc -l
+     ...около 1300 строк
+
+3. Плейбук с фактами и проверками проходит на трёх узлах, changed=0:
+
+     ansible-playbook 01_facts.yml
+     PLAY RECAP
+     web1  : ok=6  changed=0  unreachable=0  failed=0
+
+4. Настраиваемые факты лежат на узлах и читаются, а повторный прогон
+   плейбука ничего не меняет:
+
+     ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
+     ...в выводе site.general.owner: engineer и hardware.cpu_cores: 2
+     ansible-playbook 02_custom_facts.yml
+     web1  : ok=5  changed=0  unreachable=0  failed=0
+
+5. Страница сайта собрана из шаблона и идемпотентна:
+
+     ansible-playbook 03_index_template.yml --limit web
+     web1  : ok=3  changed=1  unreachable=0  failed=0
+     ansible-playbook 03_index_template.yml --limit web
+     web1  : ok=3  changed=0  unreachable=0  failed=0
+
+   На странице видны имя машины, адрес, семейство ОС и владелец:
+
+     curl -s http://web1/ | grep -E 'Машина|Адрес|Семейство|Владелец'
+     <h1>Машина web1</h1>
+     <tr><th>Адрес</th><td>10.0.2.11</td></tr>
+     <tr><th>Семейство ОС</th><td>Debian</td></tr>
+     <tr><th>Владелец машины</th><td>engineer</td></tr>
+
+   На db1 страницы нет:
+
+     ansible db1 -m ansible.builtin.stat -a "path=/var/www/html/index.html"
+     ..."exists": false
+
+6. Шаблон с циклом разложен на всех трёх машинах:
+
+     ansible-playbook 04_motd.yml
+     ssh engineer@web1 cat /etc/motd
+     ...три строки: web1, web2 и db1 с адресами и семействами
+
+7. Волшебные переменные работают на всех машинах, включая
+   управляющую:
+
+     ansible-playbook 05_hostvars.yml
+     ...group_names у web1: web, debian, linux; у db1: db, redhat, linux
+     ansible web1 -m ansible.builtin.debug -a "msg={{ inventory_dir }}"
+     web1 | SUCCESS => { "msg": "/home/engineer/ansible-lab" }
+
+8. Режим --check отражается в переменной ansible_check_mode:
+
+     ansible-playbook 05_hostvars.yml --check | grep ansible_check_mode
+     ..."ansible_check_mode: True"
+
+9. Файлы практики на месте:
+
+     ls -1 ~/ansible-lab/*.yml ~/ansible-lab/templates ~/ansible-lab/facts.d
+     ...пять плейбуков, index.j2, motd.j2, site.fact, hardware.fact
+
+10. Синтаксис всех плейбуков проверен до запуска:
+
+     for f in ~/ansible-lab/0*.yml; do
+         ansible-playbook --syntax-check "$f" || echo "проблема в $f"
+     done
+     playbook: /home/engineer/ansible-lab/01_facts.yml
+
+ВРЕМЯ ПРОВЕРКИ: минуты три. Если что-то не сходится, начните с раздела
+«Если что-то пошло не так»: почти все расхождения — это опечатка
+в имени факта, незакрытая кавычка или пустой ansible_local.
+
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Далее в курсе:
+
+  * практика 7 — условия, циклы, блоки, обработчики: условие when,
+    которое уберёт --limit web и разделит семейства ОС, станет основным
+    инструментом; факты из этой практики превратятся в условия,
+    а не в отчёт;
+  * практика 8 — файлы, права, текстовые конфигурации: lineinfile,
+    blockinfile, find и stat; там же validate на sshd_config
+    с проверкой sshd -t, о которой мы говорили в шаге 11;
+  * практика 9 — административные задачи: sudoers раскладывается
+    с validate: "visudo -cf %s", как в шаге 11;
+  * практика 10 — роли: шаблоны переезжают в роль web_admin,
+    в её собственный каталог templates/;
+  * практика 12 — Jinja2 для настоящих конфигов: там же место
+    для {% raw %}, trim_blocks и lookup('template', ...), и там же
+    validate становится основным приёмом;
+  * практика 14 — сложные проекты: отчёт о парке через hostvars
+    собирается одной машиной с delegate_to и run_once;
+  * практика 16 — качество автоматизации и динамическая
+    инвентаризация: кэш инвентаря и то, чем он отличается от кэша
+    фактов, о котором мы говорили в шаге 12.
+
+ПЕРЕД ПЕРЕХОДОМ уберите за собой:
+
+  убирать нечего: все созданные файлы — часть проекта курса, и они
+  понадобятся в практиках 7-10. Настраиваемые факты остаются на узлах:
+  роль и владелец машины — это не «мусор от упражнения», а именно то,
+  для чего механизм и сделан.
+
+Единственное, что стоит сделать сейчас: снимок машин. Стенд изменился:
+на узлах появились настраиваемые факты, на web1 и web2 — страница
+из шаблона, на всех трёх — свой /etc/motd.

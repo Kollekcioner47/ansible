@@ -1,0 +1,67 @@
+---
+# Переменные виртуального хоста nginx.
+# Файл подключается плейбуком 01_nginx.yml через vars_files.
+
+# Порт, который слушает виртуальный хост. 80 занят apache2:
+# его поставили практики 9 и 10, и два веб-сервера на одном
+# порту не уживаются. Поэтому nginx слушает 8080 — так же,
+# как это сделано в практике 15.
+nginx_port: 8080
+
+# Имя, по которому отвечает сайт. В стенде DNS нет: запись
+# web1.ansible-lab.local добавлена в /etc/hosts управляющей машины.
+nginx_server_name: "web1.ansible-lab.local"
+
+# Корень сайта и страница по умолчанию.
+nginx_root: "/var/www/web1"
+nginx_index: "index.html"
+
+# Имя upstream из шаблона nginx_upstream.j2.
+nginx_upstream_name: "app_backend"
+
+# Бэкенды приложения. Это данные, а не текст шаблона:
+# добавить машину — значит дописать элемент списка.
+# enabled: false означает «машина есть, но трафик на неё не идёт».
+nginx_backends:
+  - name: "web1"
+    address: "10.0.2.11:8080"
+    weight: 3
+    enabled: true
+  - name: "web2"
+    address: "10.0.2.12:8080"
+    weight: 1
+    enabled: true
+  - name: "db1"
+    address: "10.0.2.13:8080"
+    weight: 1
+    enabled: false
+
+# Метки сайтов: имя сайта — метка. Строка в формате YAML,
+# потому что так этот список отдаёт внешняя система.
+# Шаблон превращает строку в данные фильтром from_yaml.
+nginx_site_tags_raw: |
+  web1.ansible-lab.local: web1
+  web2.ansible-lab.local: web2
+  db1.ansible-lab.local: db1
+
+# Что отдавать с диска, а что проксировать.
+# type: static — файлы с диска, type: proxy — запрос в upstream.
+nginx_locations:
+  - path: "/"
+    type: "static"
+  - path: "/static/"
+    type: "static"
+    expires: "7d"
+  - path: "/api/"
+    type: "proxy"
+
+# Дополнительные заголовки. Если переменной нет,
+# шаблон ничего не добавит: это проверяет тест is defined.
+nginx_extra_headers:
+  - name: "X-Frame-Options"
+    value: "SAMEORIGIN"
+  - name: "X-Content-Type-Options"
+    value: "nosniff"
+
+# Ограничение на размер тела запроса.
+nginx_client_max_body_size: "10m"

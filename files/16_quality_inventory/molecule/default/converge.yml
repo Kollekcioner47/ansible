@@ -1,0 +1,11 @@
+---
+# converge.yml — то, что molecule применяет к машинам сценария:
+# обычный плейбук, как site.yml. Переменные берутся из group_vars
+# инвентаря, который строит molecule.
+
+- name: Проверить роль web_admin на узлах стенда
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - role: web_admin

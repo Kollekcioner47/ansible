@@ -1,0 +1,49 @@
+---
+# 06_validate.yml — шаг 13 практики 11.
+# validate: конфигурация проверяется во временном файле до подмены.
+# Сначала задача с опечаткой падает, потом записывается верная строка.
+# Ошибка перехвачена нарочно (ignore_errors) и сразу проверена assert:
+# так видно, что validate отклонил файл и файл на узле не изменился.
+#   ansible-playbook 06_validate.yml
+# Второй прогон обязан дать changed=0 у последней задачи записи.
+
+- name: Проверить конфигурацию до того, как она попадёт на место
+  hosts: web
+  become: true
+  gather_facts: true
+  vars:
+    sshd_dropin: /etc/ssh/sshd_config.d/20-sshd-hardening.conf
+    broken_line: 'PermitRootLoginn no'
+  tasks:
+    - name: Попробовать записать строку с опечаткой
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: '^#?\s*PermitRootLogin\s'
+        line: "{{ broken_line }}"
+        validate: "sshd -t -f %s"
+      register: broken_attempt
+      ignore_errors: true
+      notify: Перезапустить службу SSH
+
+    - name: Убедиться, что validate отклонил файл
+      ansible.builtin.assert:
+        that:
+          - broken_attempt.msg is search('failed to validate')
+        fail_msg: >-
+          Задача с опечаткой не упала. Проверьте, что в задаче есть
+          validate и что строка действительно ошибочная.
+        success_msg: "validate отклонил файл с опечаткой, подмены не было."
+
+    - name: Записать верную строку
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: '^#?\s*PermitRootLogin\s'
+        line: "PermitRootLogin no"
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+  handlers:
+    - name: Перезапустить службу SSH
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted

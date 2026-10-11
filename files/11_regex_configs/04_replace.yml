@@ -1,0 +1,108 @@
+---
+# 04_replace.yml — шаг 11 практики 11.
+# replace: массовая замена по регулярному выражению, backup и validate.
+# play 1 — chrony.conf на db1 (Rocky Linux), play 2 — resolv.conf.
+#   ansible-playbook 04_replace.yml
+# Второй прогон обязан дать changed=0.
+
+- name: Перевести chrony на внутренние серверы времени
+  hosts: db
+  become: true
+  gather_facts: false
+  vars:
+    chrony_conf: /etc/chrony.conf
+  tasks:
+    - name: Узнать, наш ли уже этот файл
+      ansible.builtin.command:
+        cmd: grep -c 'ru.pool.ntp.org' /etc/chrony.conf
+      register: chrony_managed
+      changed_when: false
+      failed_when: false
+
+    - name: Положить образец конфигурации на место
+      ansible.builtin.copy:
+        src: conf/chrony.conf.in
+        dest: "{{ chrony_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      when: chrony_managed.rc != 0
+
+    - name: Заменить все строки внешнего пула, сохранив номер сервера
+      ansible.builtin.replace:
+        path: "{{ chrony_conf }}"
+        regexp: '^server (\d)\.centos\.pool\.ntp\.org iburst$'
+        replace: 'server \1.ru.pool.ntp.org iburst'
+        backup: true
+        validate: "chronyd -p -f %s"
+      notify: Перезапустить службу chrony
+
+    - name: Округлить шаг подстройки часов
+      ansible.builtin.replace:
+        path: "{{ chrony_conf }}"
+        regexp: '^makestep\s+1\.0\s+3$'
+        replace: 'makestep 0.1 3'
+        validate: "chronyd -p -f %s"
+      notify: Перезапустить службу chrony
+
+    - name: "Удалить строку logdir: каталог по умолчанию нас устраивает"
+      ansible.builtin.replace:
+        path: "{{ chrony_conf }}"
+        regexp: '^logdir\s+/var/log/chrony$'
+        replace: ''
+        validate: "chronyd -p -f %s"
+      notify: Перезапустить службу chrony
+
+  handlers:
+    - name: Перезапустить службу chrony
+      ansible.builtin.service:
+        name: chronyd
+        state: restarted
+
+
+- name: Править адреса резолверов в учебной копии resolv.conf
+  hosts: web
+  become: true
+  gather_facts: false
+  vars:
+    resolv_copy: /etc/resolv.conf.lab
+  tasks:
+    - name: Положить образец в учебную копию
+      ansible.builtin.copy:
+        src: conf/resolv.conf.in
+        dest: "{{ resolv_copy }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        force: false
+
+    - name: "Убрать внешний резолвер: точку экранируем"
+      ansible.builtin.replace:
+        path: "{{ resolv_copy }}"
+        regexp: '^nameserver 8\.8\.4\.4$'
+        replace: '# 8.8.4.4 удалён плейбуком практики 11'
+        backup: true
+
+    - name: Заменить домен поиска
+      ansible.builtin.replace:
+        path: "{{ resolv_copy }}"
+        regexp: '^search\s+\S+$'
+        replace: 'search lab.local'
+
+    - name: Прочитать список серверов имён
+      ansible.builtin.command:
+        cmd: grep '^nameserver' /etc/resolv.conf.lab
+      register: resolv_lines
+      changed_when: false
+
+    - name: Отказаться работать, если остался внешний резолвер
+      ansible.builtin.assert:
+        that:
+          - resolv_lines.stdout is not search('(?m)^nameserver 8\.8\.4\.4$')
+          - resolv_lines.stdout is search('(?m)^nameserver 10\.0\.2\.3$')
+        fail_msg: >-
+          В учебной копии остался резолвер 8.8.4.4 или пропал 10.0.2.3.
+          Проверьте экранирование точек в выражении.
+        success_msg: "Внешний резолвер убран, домен поиска заменён."

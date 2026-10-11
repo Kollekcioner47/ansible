@@ -1,0 +1,41 @@
+---
+# Переменные семейства Debian (Ubuntu 26.04): web1 и web2.
+# Файл читается задачей ansible.builtin.include_vars в pre_tasks —
+# так же, как vars/Debian.yml в практике 9.
+
+# Второй диск стенда: 10 ГБ, есть только на управляемых узлах.
+# Учебное значение. В рабочем проекте диск задают переменной группы,
+# а не литералом внутри плейбука.
+storage_disk: /dev/sdb
+storage_partition: "{{ storage_disk }}1"
+
+# Имена из единого реестра сущностей курса: группа томов data,
+# логический том webdata, точка монтирования /srv/data.
+storage_vg: data
+storage_lv: webdata
+storage_mount: /srv/data
+
+# Размер логического тома: начальный (шаг 5) и после расширения
+# (шаги 8 и 9). Точное число, а не процент: процент от свободного места
+# не идемпотентен — на каждом прогоне он разный.
+storage_lv_size: 6G
+storage_lv_size_extended: 8G
+
+# Файловая система: на Ubuntu — ext4, на Rocky Linux — xfs.
+storage_fstype: ext4
+
+# Чем расширяется файловая система: ext4 растёт resize2fs,
+# xfs — xfs_growfs. Модуль выбирает инструмент сам, эти имена
+# нужны для объяснения и для ручных проверок.
+storage_grow_tool: resize2fs
+
+# Опции монтирования для /etc/fstab. noatime рядом с defaults:
+# на диске с данными не нужно записывать время доступа при чтении.
+storage_mount_opts: "defaults,noatime"
+
+# Пакеты для работы с дисками и файловыми системами. Имена пакетов
+# совпадают с RedHat-семейством, а набор инструментов разный.
+storage_packages:
+  - parted
+  - lvm2
+  - e2fsprogs

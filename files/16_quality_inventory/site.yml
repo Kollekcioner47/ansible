@@ -1,0 +1,15 @@
+---
+# site.yml — точка входа проекта. Инвентарь берётся из ansible.cfg:
+# inventory = inventory/stand.py, то есть список машин приходит
+# от внешнего скрипта, а не из файла.
+
+- name: Веб-сервер и сайт на узлах стенда
+  hosts: linux
+  become: true
+  gather_facts: true
+  vars:
+    web_admin_deploy_site: "{{ 'web' in group_names }}"
+    web_admin_site_title: "Учебный стенд курса Ansible"
+    web_admin_owner: engineer
+  roles:
+    - role: web_admin

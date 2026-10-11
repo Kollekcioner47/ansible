@@ -1,0 +1,28 @@
+---
+# 04_filesystem.yml — практика 13, шаг 6: файловая система на логическом томе.
+# Тип файловой системы берётся из переменной по семейству ОС:
+# ext4 на Ubuntu, xfs на Rocky Linux.
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 04_filesystem.yml
+
+- name: "Файловая система на логическом томе"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Поставить инструменты создания файловых систем"
+      ansible.builtin.package:
+        name: "{{ storage_packages }}"
+        state: present
+
+    - name: "Создать файловую систему на логическом томе"
+      community.general.filesystem:
+        fstype: "{{ storage_fstype }}"
+        dev: "/dev/mapper/{{ storage_vg }}-{{ storage_lv }}"
+        state: present

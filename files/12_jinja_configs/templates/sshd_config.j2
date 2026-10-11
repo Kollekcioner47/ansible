@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# Файл собран из шаблона sshd_config.j2.
+# Параметры берутся из словаря sshd_params в файле vars/sshd.yml.
+# Это полный конфигурационный файл, поэтому его можно проверить
+# целиком: validate: sshd -t -f %s.
+
+# Drop-in файлы читаются первыми: если параметр задан и здесь, и там,
+# sshd берёт значение из первого места, где он встретился.
+Include /etc/ssh/sshd_config.d/*.conf
+
+{% for key, value in sshd_params.items() %}
+{{ '%-30s' | format(key) }} {{ value }}
+{% endfor %}
+
+Subsystem sftp {{ sshd_sftp_subsystem }}
+{% if sshd_allow_users is defined %}
+AllowUsers {{ sshd_allow_users | join(' ') }}
+{% endif %}

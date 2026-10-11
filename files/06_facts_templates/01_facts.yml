@@ -1,0 +1,45 @@
+---
+# Практика 6, шаги 1-3: выбранные факты и проверка предположений о машине.
+# Запуск: ansible-playbook 01_facts.yml
+
+- name: Показать выбранные факты стенда
+  hosts: linux
+  gather_facts: true
+  tasks:
+    - name: Показать сводку по машине
+      ansible.builtin.debug:
+        msg:
+          - "Хост инвентаря: {{ inventory_hostname }}"
+          - "Имя машины: {{ ansible_facts['hostname'] }}"
+          - "Семейство ОС: {{ ansible_facts['os_family'] }}"
+          - "Дистрибутив: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+          - "Ядер: {{ ansible_facts['processor_vcpus'] }}"
+          - "Память, МБ: {{ ansible_facts['memtotal_mb'] }}"
+          - "Основной адрес: {{ ansible_facts['default_ipv4']['address'] }}"
+
+    - name: Показать те же значения короткими именами
+      ansible.builtin.debug:
+        msg: >-
+          {{ ansible_hostname }}: {{ ansible_os_family }},
+          {{ ansible_distribution }} {{ ansible_distribution_version }},
+          {{ ansible_processor_vcpus }} ядра, {{ ansible_memtotal_mb }} МБ,
+          {{ ansible_default_ipv4.address }}
+
+- name: Проверить предположения о машине
+  hosts: linux
+  gather_facts: true
+  tasks:
+    - name: Убедиться, что семейство ОС входит в список поддерживаемых
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] in ['Debian', 'RedHat']
+        success_msg: "Семейство {{ ansible_facts['os_family'] }} поддерживается"
+        fail_msg: "Семейство {{ ansible_facts['os_family'] }} в курсе не поддерживается"
+
+    - name: Убедиться, что машине хватает ресурсов стенда
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['memtotal_mb'] | int >= 1024
+          - ansible_facts['processor_vcpus'] | int >= 1
+        success_msg: "Ресурсов хватает: {{ ansible_facts['memtotal_mb'] }} МБ, {{ ansible_facts['processor_vcpus'] }} ядра"
+        fail_msg: "Машине не хватает ресурсов: {{ ansible_facts['memtotal_mb'] }} МБ"

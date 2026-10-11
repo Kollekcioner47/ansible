@@ -1,0 +1,43 @@
+---
+# 01_copy.yml — шаг 5 практики 8.
+# Каталог сайта, содержимое и расписание задач: три состояния,
+# три задачи. Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 01_copy.yml
+# Второй прогон обязан дать changed=0.
+
+- name: Разложить статический сайт
+  hosts: web
+  become: true
+  gather_facts: false
+  vars:
+    site_dir: /var/www/html/site
+    file_mode: "0644"
+    dir_mode: "0755"
+    cron_minute: "17"
+    cron_hour: "4"
+    cron_mailto: root@localhost
+  tasks:
+    - name: Создать каталог сайта
+      ansible.builtin.file:
+        path: "{{ site_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ dir_mode }}"
+
+    - name: Скопировать содержимое сайта
+      ansible.builtin.copy:
+        src: site/
+        dest: "{{ site_dir }}/"
+        owner: root
+        group: root
+        mode: "{{ file_mode }}"
+        backup: true
+
+    - name: Разложить расписание задач cron
+      ansible.builtin.template:
+        src: templates/cron.j2
+        dest: /etc/cron.d/site-check
+        owner: root
+        group: root
+        mode: "0644"

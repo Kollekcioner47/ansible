@@ -1,0 +1,35 @@
+---
+# molecule/default/molecule.yml — сценарий проверки роли web_admin.
+# Запуск из каталога проекта: molecule test
+# Драйвер delegated: molecule ничего не создаёт, а работает
+# на хостах, которые уже есть. В стенде курса нет Docker.
+driver:
+  name: delegated
+  options:
+    # Машины создаёт и удаляет стенд, а не molecule.
+    managed: false
+    ansible_connection_options:
+      ansible_connection: ssh
+      ansible_user: engineer
+      ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+# Хосты сценария: web1 и web2 из стенда (имена — из /etc/hosts).
+platforms:
+  - {name: web1, groups: [web]}
+  - {name: web2, groups: [web]}
+provisioner:
+  name: ansible
+  # Molecule запускает ansible-playbook из служебного каталога:
+  # без этой переменной роль web_admin не найдётся.
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  inventory:
+    group_vars:
+      all:
+        ansible_user: engineer
+        ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+      web:
+        web_admin_deploy_site: true
+verifier:
+  name: ansible
+scenario:
+  test_sequence: [syntax, create, prepare, converge, idempotence, verify, destroy]

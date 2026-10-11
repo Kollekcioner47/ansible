@@ -1,0 +1,639 @@
+Приложение 2. Частые ошибки и что с ними делать.
+
+ЭТО СПРАВОЧНИК, А НЕ УЧЕБНИК. Здесь собраны ошибки, которые студенты
+курса видят на стенде: из секций «Если что-то пошло не так» всех
+шестнадцати практик и из шагов, где ошибка заметна только в выводе.
+Найдите свой симптом, прочитайте причину и порядок проверки.
+
+=========================================================================
+КАК ЧИТАТЬ ЭТО ПРИЛОЖЕНИЕ
+=========================================================================
+
+Блок устроен одинаково: точный текст ошибки, причина и порядок проверки
+с командами. Текст ошибки приведён как есть, на английском: искать
+нужно именно его. Пометка «Практика N» указывает, где ошибка разобрана
+полностью. Курс собран на ansible-core 2.19: в другой версии текст
+ошибки может отличаться, а причина и проверки — те же.
+
+
+=========================================================================
+1. ПОДКЛЮЧЕНИЕ И SSH
+=========================================================================
+
+ПРОБЛЕМА: Permission denied (publickey).
+
+Ключ не принят: его нет на узле или у файла ключа неверные права.
+Порядок: права ключа (chmod 600), потом authorized_keys. Практика 1.
+
+  ls -l ~/.ssh/id_ed25519
+  ssh -i ~/.ssh/id_ed25519 engineer@10.0.2.11 hostname
+
+ПРОБЛЕМА: Host key verification failed.
+
+Узел предъявил чужой ключ или он не совпадает с known_hosts: бывает
+после пересоздания ВМ. Порядок: host_key_checking, потом узел. Практика 2.
+
+  ansible-config dump --only-changed | grep -i host_key
+  ssh-keygen -F web1
+
+ПРОБЛЕМА: Missing sudo password (в оболочке — sudo: a password is required)
+
+NOPASSWD не применён: файл в /etc/sudoers.d потерял права 0440 или
+содержит опечатку. Порядок: sudo -n на узле, потом visudo. Практики 1 и 9.
+
+  ssh engineer@web1 'sudo -n true && echo ok'
+  ssh engineer@web1 'sudo visudo -cf /etc/sudoers.d/engineer-nopass'
+
+ПРОБЛЕМА: UNREACHABLE! Failed to connect to the host via ssh (No route to host)
+
+Это ответ SSH, а не ошибка Ansible: причина в сети или в параметрах
+подключения. Порядок: ping, порт, ssh вручную. Практики 1 и 2.
+
+  ping -c1 10.0.2.13 ; nc -z -w2 10.0.2.13 22
+  ssh -o BatchMode=yes engineer@db1 hostname
+
+ПРОБЛЕМА: ssh: connect to host 10.0.2.11 port 22: Connection timed out
+
+Чаще всего ufw включён без правила для 22/tcp, а текущее соединение
+держит conntrack, поэтому ошибка видна не сразу. Порядок: nc. Практика 9.
+
+  nc -z -w2 10.0.2.11 22
+  sudo ufw status verbose ; sudo ufw allow 22/tcp
+
+ПРОБЛЕМА: вход по паролю отключён, а ключ не работает
+
+PasswordAuthentication no включено, а ключ потерян: остаётся консоль
+гипервизора. Порядок: вход по ключу, потом sshd_config.d. Практика 2.
+
+  ssh -o BatchMode=yes engineer@web1 hostname
+  ssh engineer@web1 'sudo sshd -t && sudo systemctl reload ssh'
+
+
+=========================================================================
+2. ИНВЕНТАРЬ И КОНФИГУРАЦИЯ
+=========================================================================
+
+ПРОБЛЕМА: [WARNING]: Unable to parse ... as an inventory source
+
+Ansible не нашёл инвентарь и остался с одной машиной localhost:
+прогон может ничего не сделать. Порядок: pwd, потом cfg. Практики 1 и 2.
+
+  pwd ; ls -l inventory.ini
+  ansible --version | grep 'config file'
+
+ПРОБЛЕМА: [WARNING]: Could not match supplied host pattern, ignoring: web3
+
+Шаблон не совпал ни с чем: Ansible предупреждает и продолжает работу
+с теми, кто совпал. Опасен случай, когда не совпало ничего. Практика 2.
+
+  ansible-inventory --graph
+  ansible 'web3' --list-hosts
+
+ПРОБЛЕМА: одна и та же машина записана в инвентаре несколько раз
+
+Ошибки нет: повторная строка не создаёт вторую машину, а перезаписывает
+её переменные; побеждает последняя строка. Порядок: дубликаты. Практика 2.
+
+  grep -v '^#' inventory.ini | grep -v '^$' | sort | uniq -d
+  ansible linux --list-hosts
+
+ПРОБЛЕМА: настройки ansible.cfg не применяются
+
+Секция названа [default] вместо [defaults], либо запуск идёт не из
+каталога с файлом. Порядок: ansible-config dump. Практика 2.
+
+  ansible-config dump --only-changed | grep -i host_key
+  ansible --version | grep 'config file'
+
+ПРОБЛЕМА: ERROR! We were unable to read either as JSON nor YAML
+
+Сломан инвентарь или group_vars: формат не совпал с расширением.
+Порядок: имя файла из ошибки, потом содержимое. Практика 2.
+
+  grep -Pn "\t" group_vars/all.yml
+  ansible-inventory -i inventory.ini --graph
+
+ПРОБЛЕМА: Could not import the python3-apt module using /usr/bin/python3
+
+Причина в ansible_python_interpreter: нет библиотеки пакетного менеджера
+или выбран не тот Python. Порядок: ping, потом cfg. Практики 1, 2 и 4.
+
+  ansible db1 -m ansible.builtin.ping
+  ansible-config dump --only-changed | grep -i interpreter
+
+
+=========================================================================
+3. YAML И ОТСТУПЫ
+=========================================================================
+
+ПРОБЛЕМА: yaml.scanner.ScannerError: mapping values are not allowed here
+
+Разборщик остановился на двоеточии и не ожидал значения словаря: это
+про двоеточие, а не про отступ. Порядок: отступ, кавычки. Практики 3 и 4.
+
+  ansible-playbook --syntax-check 05_broken.yml
+  sed -n '8,12p' 05_broken.yml
+
+ПРОБЛЕМА: while scanning a quoted scalar / found unexpected end of stream
+
+Кавычка не закрыта, и YAML читает остаток файла как строку; номер строки
+указывает на начало значения. Порядок: сосчитать кавычки. Практики 6 и 11.
+
+  sed -n '17,20p' 01_facts.yml
+  grep -c '"' 01_facts.yml
+
+ПРОБЛЕМА: ERROR! Syntax Error while loading YAML: did not find expected key
+
+Структура не сходится: отступ не кратен двум или в отступе таб, который
+глазом не отличается от пробела. Порядок: отступы, табы. Практики 3 и 4.
+
+  grep -Pn "\t" 04_web_full.yml
+  ansible-playbook --syntax-check 04_web_full.yml
+
+ПРОБЛЕМА: mode: 644 — права получаются не те
+
+Ошибки нет, но 644 без ведущего нуля YAML читает как десятичное:
+это 0o1204, а не 0644; правило lint — risky-octal. Практики 3 и 8.
+
+  grep -rn 'mode:' *.yml
+  ssh engineer@web1 'ls -l /tmp/01_scalars.yml'
+
+ПРОБЛЕМА: Found duplicate mapping key 'notify' (Using last defined value only)
+
+YAML не считает повторяющийся ключ ошибкой: остаётся последнее значение,
+первое теряется, и один перезапуск не происходит. Практики 4 и 12.
+
+  grep -n 'notify' -A2 04_web_full.yml
+  ansible-playbook --syntax-check 04_web_full.yml
+
+
+=========================================================================
+4. AD-HOC И МОДУЛИ
+=========================================================================
+
+ПРОБЛЕМА: ERROR! Missing target hosts
+
+Перед этим видно Could not match supplied host pattern, ignoring: webb1.
+Опечатка в имени или машины нет в инвентаре. Порядок: граф, имя. Практика 3.
+
+  ansible-inventory --graph
+  ansible-inventory --host web1
+
+ПРОБЛЕМА: missing required arguments: dest (команда ad-hoc набрана без -a)
+
+Модуль получил пустой набор параметров: забыт ключ -a. Порядок:
+обязательные параметры модуля, потом команда с ключом -a. Практика 3.
+
+  ansible-doc -s ansible.builtin.copy
+  ansible web -m ansible.builtin.copy -a "src=/tmp/a dest=/tmp/b"
+
+ПРОБЛЕМА: модуль command отказался работать с | или >
+
+Оболочки в цепочке нет: знак конвейера ушёл в программу как имя файла,
+а с перенаправлением ошибки нет, но файл не создан. Практика 3.
+
+  ansible web1 -m ansible.builtin.shell -a 'ls /tmp | wc -l'
+  ls -l /tmp/role.txt
+
+ПРОБЛЕМА: ERROR! couldn't resolve module/action 'ansible.builtin.copi'
+
+Причин три: опечатка, нет коллекции, неверный путь. Рядом —
+предупреждение Consider using the ansible.builtin.apt module rather
+than running 'apt': это подсказка заменить shell модулем. Практики 3 и 15.
+
+  ansible-doc -l | grep -i copy ; ansible-galaxy collection list
+  ansible-doc -s ansible.builtin.apt
+
+
+=========================================================================
+5. ПЛЕЙБУКИ
+=========================================================================
+
+ПРОБЛЕМА: ERROR! 'host' is not a valid attribute for a Play
+
+Тот же класс — 'notife' ... for a Task и 'ignore_errors' ... for a Play:
+ключ назван неверно или стоит не на своём уровне. Порядок: строка
+из ошибки, потом отступ. Практики 4 и 7.
+
+  sed -n '1,12p' 04_web_full.yml
+  ansible-playbook --syntax-check 04_web_full.yml
+
+ПРОБЛЕМА: ERROR! The requested handler 'Restart Apache' was not found
+
+Дальше: ...in either the main handlers list nor in the listening handlers
+list. notify вызвал обработчик, которого нет в этом play. Порядок: имена
+посимвольно, тот же play, отступ. Практики 4, 7 и 10.
+
+  grep -n 'notify' -A2 04_web_full.yml
+  grep -n 'listen' handlers/main.yml
+
+ПРОБЛЕМА: ERROR! 'roles' is not a valid attribute for a Task
+
+Ansible показывает место: tasks:, затем - roles: с пометкой ^ here.
+roles — ключ play. Порядок: уровень ключа, перенос на уровень play.
+Практики 10 и 14.
+
+  sed -n '1,15p' site.yml
+  ansible-playbook --syntax-check site.yml
+
+ПРОБЛЕМА: задача падает, потому что нет прав
+
+Сообщение: Destination /var/www/html/index.html not writable. Порядок:
+become на play, sudo без пароля, become_user, become у задачи. Практики 1 и 4.
+
+  ansible web1 -b -m ansible.builtin.command -a "sudo -n true"
+  grep -n 'become' 04_web_full.yml
+
+ПРОБЛЕМА: повторный прогон снова changed=1 (задача не идемпотентна)
+
+Задача каждый раз создаёт разное содержимое: обычно дата в шаблоне или
+нет changed_when. Порядок: найти changed и убрать меняющееся. Практики 4 и 10.
+
+  ansible-playbook site.yml | grep -E 'changed:|TASK'
+  grep -rn 'date_time' tasks/ playbooks/ roles/
+
+ПРОБЛЕМА: conditional statements should not include jinja2 templating delimiters
+
+when — это выражение, а не шаблон; в ansible-core 2.19 условие в {{ }}
+даёт Conditionals should not be surrounded by templating delimiters.
+Порядок: убрать {{ }}. Практика 7.
+
+  grep -n 'when:' -A1 *.yml
+  ansible-playbook --syntax-check 01_when.yml
+
+ПРОБЛЕМА: 'item' is undefined
+
+Так отвечает задача, когда к item обращаются вне цикла. Порядок: есть ли
+loop и на своём ли он уровне; не обращается ли к нему rescue. Практика 7.
+
+  grep -n -A6 'loop:' 03_loops.yml
+  ansible-playbook 03_loops.yml --list-tasks
+
+ПРОБЛЕМА: until не дождался и задача упала
+
+Видно FAILED - RETRYING ... (9 retries left), потом attempts: 10
+и stdout: activating: попытки исчерпаны. Порядок: команда руками, журнал,
+потом условие. Практика 7.
+
+  ssh engineer@web1 "systemctl is-active apache2"
+  ssh engineer@web1 "journalctl -u apache2 -n 30 --no-pager"
+
+
+=========================================================================
+6. ПЕРЕМЕННЫЕ И ФАКТЫ
+=========================================================================
+
+ПРОБЛЕМА: VARIABLE IS NOT DEFINED! / 'dict object' has no attribute
+
+Первое печатает debug, когда переменной нет (задача остаётся зелёной),
+в 2.19 — заглушкой << error 1 - 'lab_owner' is undefined >>. Второе —
+обращение к несуществующему ключу факта, обычно из-за опечатки
+(ansible_distibution). Порядок: имя, потом vars_files и setup. Практики 5 и 6.
+
+  ansible web1 -m ansible.builtin.debug -a "var=lab_owner"
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_distribution*"
+
+ПРОБЛЕМА: переменная переопределилась не там, где ожидалось
+
+Ошибки нет: одно имя задано в двух местах. vars роли сильнее group_vars
+и play; --extra-vars сильнее всех. Порядок: найти объявления. Практика 5.
+
+  grep -rn 'web_port' ~/ansible-lab --include='*.yml'
+  ansible web1 -m ansible.builtin.debug -a "var=web_port"
+
+ПРОБЛЕМА: факт не появился: ansible_local пуст или путь слишком короткий
+
+Файлов .fact не найдено: проверьте каталог /etc/ansible/facts.d,
+расширение .fact, секцию [general] в INI и сбор фактов в этом play.
+Для INI путь на уровень длиннее: ansible_local.site.general.owner. Практика 6.
+
+  ssh engineer@web1 'ls -l /etc/ansible/facts.d/'
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
+
+ПРОБЛЕМА: Recursive loop detected in template: maximum recursion depth exceeded
+
+Переменная ссылается на себя (web_port: "{{ web_port }}") или два имени
+ссылаются друг на друга. Порядок: убрать ссылку на себя. Практика 5.
+
+  grep -rn 'web_port' ~/ansible-lab --include='*.yml'
+  ansible web1 -m ansible.builtin.debug -a "var=web_port"
+
+
+=========================================================================
+7. VAULT
+=========================================================================
+
+ПРОБЛЕМА: ERROR! Attempting to decrypt but no vault secrets found
+
+Рядом: ERROR! Decryption failed (no vault secrets were found that could
+decrypt): пароля нет или он не подошёл, и Ansible намеренно не различает
+эти случаи. Порядок: первая строка файла и способ пароля. Практика 5.
+
+  head -1 group_vars/all/vault.yml
+  ansible-config dump --only-changed | grep -i vault
+
+ПРОБЛЕМА: ERROR! input is already encrypted
+
+Файл уже зашифрован; это защита от потери данных. Порядок: первая строка
+файла, для смены пароля — rekey, а не encrypt. Практика 5.
+
+  head -1 secrets_demo.yml
+  ansible-vault rekey secrets_demo.yml
+
+ПРОБЛЕМА: пароль Vault лежит в репозитории
+
+Ошибок нет, но если .vault_pass попал в git рядом с зашифрованным файлом,
+шифрование не защищает ничего. Порядок: .gitignore. Практики 5 и 14.
+
+  echo '.vault_pass' >> .gitignore
+  git status --short
+
+
+=========================================================================
+8. ШАБЛОНЫ JINJA2
+=========================================================================
+
+ПРОБЛЕМА: AnsibleUndefinedVariable: 'nginx_root' is undefined
+
+Переменной нет: файл переменных не подключён, опечатка или она задана
+для другой группы. Порядок: vars_files, потом debug. Практика 12.
+
+  ansible web1 -m ansible.builtin.debug -a "var=nginx_root"
+  grep -n -A4 'vars_files' 01_nginx.yml
+
+ПРОБЛЕМА: jinja2.exceptions.TemplateSyntaxError: unexpected '}'
+
+В задаче это template error while templating string. Порядок: строка
+из сообщения, потом пары скобок. Практики 6 и 12.
+
+  grep -n '{{' templates/nginx_vhost.j2
+  ansible localhost -m ansible.builtin.template -a "src=templates/nginx_vhost.j2 dest=/tmp/vhost.test"
+
+ПРОБЛЕМА: template error while templating string: expected token
+
+Дальше: got ':' и String: server {{ backend.address:8080 }};. Внутри
+{{ }} записали конструкцию из конфига. Порядок: строка, данные. Практика 12.
+
+  ansible web1 -m ansible.builtin.debug -a "var=nginx_backends"
+  grep -n '{{' templates/upstream.j2
+
+ПРОБЛЕМА: Could not find or access '.../templates/index.j2'
+
+Полный текст кончается словами on the Ansible Controller: модуль template
+ищет файл на управляющей машине. Относительный src — в templates/ рядом
+с плейбуком. Порядок: pwd, потом файл. Практики 6, 8 и 10.
+
+  pwd ; ls -l templates/index.j2
+  ansible-playbook --syntax-check 01_template.yml
+
+ПРОБЛЕМА: лишние пустые строки и съехавшие отступы в готовом конфиге
+
+Так бывает при выключенных trim_blocks и lstrip_blocks: перевод строки
+после {% %} и пробелы остаются. Порядок: включить оба. Практика 12.
+
+  grep -n 'trim_blocks\|lstrip_blocks' -A2 02_nginx.yml
+  ansible-playbook 02_nginx.yml --check --diff
+
+ПРОБЛЕМА: nginx: [emerg] unknown "web1" variable
+
+В шаблоне написано ${{ site_tag }}: Jinja2 подставила значение, знак $
+остался. Рядом — unknown directive "proxypass" из-за опечатки. Порядок:
+искать $ перед {{. Практика 12.
+
+  grep -n '\${{' templates/*.j2
+  ssh engineer@web1 'sudo nginx -t'
+
+ПРОБЛЕМА: validate отклонил файл, и файл не подменён
+
+Например: Bad configuration option: PermitRootLoginn. Это правильное
+поведение: файл подменяется только после проверки. Порядок: текст ошибки,
+%s в команде, файл на узле. Практики 8, 11 и 12.
+
+  ssh engineer@web1 'grep -c PermitRootLoginn /etc/ssh/sshd_config.d/20-sshd-hardening.conf'
+  grep -n 'validate' -A2 03_lineinfile.yml
+
+
+=========================================================================
+9. ФАЙЛЫ И ПРАВА
+=========================================================================
+
+ПРОБЛЕМА: Destination directory /var/www/html/site does not exist
+
+copy не создаёт каталоги, а права меняет только root. Рядом:
+Destination directory is not writable by the current user и chmod:
+Operation not permitted. Порядок: каталог, file, become. Практики 6 и 8.
+
+  ls -ld /var/www/html/site ; grep -n -B3 'copy:' 01_copy.yml
+  ansible web1 -b -m ansible.builtin.command -a "lsattr /var/www/html/site/index.html"
+
+ПРОБЛЕМА: mode must be in octal or symbolic notation
+
+Значение не является ни восьмеричным числом, ни символической записью.
+Порядок: mode: "0644", арифметика, пробелы, цикл. Практики 3 и 8.
+
+  grep -rn 'mode:' *.yml
+  grep -n 'file_mode' group_vars/all.yml
+
+ПРОБЛЕМА: lineinfile вставляет строку повторно при каждом прогоне
+
+В файле две строки PasswordAuthentication no: regexp не совпал с тем,
+что лежит в файле. Порядок: cat -A, якоря, экранирование точки,
+state: absent. Практики 8 и 11.
+
+  ssh engineer@web1 "cat -A /etc/ssh/sshd_config.d/20-sshd-hardening.conf"
+  grep -n 'regexp' -A2 03_lineinfile.yml
+
+ПРОБЛЕМА: unarchive не находит файл, хотя он есть на узле
+
+Сообщение: Could not find or access '/tmp/site-web1.tar.gz' on the Ansible
+Controller: по умолчанию архив ищут на управляющей машине. Порядок:
+remote_src, потом src. Практика 8.
+
+  ssh engineer@web1 'ls -l /tmp/site-web1.tar.gz'
+  ssh engineer@web1 'tar -tzf /tmp/site-web1.tar.gz | head'
+
+ПРОБЛЕМА: файлы из files/NN_имя оказались не там, где их ищет плейбук
+
+Относительный src ищется относительно плейбука: у copy это files/,
+у template — templates/. Порядок: каталог запуска, потом имя. Практики 6 и 8.
+
+  pwd ; ls -l templates/ files/
+  grep -n 'src:' 01_copy.yml
+
+ПРОБЛЕМА: после правки /etc/fstab машина не загрузилась (emergency mode)
+
+Видно Failed to mount /srv/data и You are in emergency mode: строка
+ссылается на устройство, которого при загрузке нет. Порядок: remount,rw,
+закомментировать, перезагрузиться; после правки — mount -a. Практика 13.
+
+  mount -o remount,rw /
+  findmnt --verify ; mount -a
+
+
+=========================================================================
+10. РОЛИ, GALAXY, КОЛЛЕКЦИИ
+=========================================================================
+
+ПРОБЛЕМА: ERROR! the role 'web_admin' was not found in ...
+
+Дальше перечислены места поиска (.../10_roles/roles, ~/.ansible/roles,
+/usr/share/ansible/roles). Роль ищут рядом с файлом, где написан play.
+Порядок: что лежит в roles/, потом имя. Практики 10 и 14.
+
+  ls -d roles/*/
+  ansible-config dump | grep -i roles_path
+
+ПРОБЛЕМА: переменная роли не переопределяется
+
+web_admin_index_file: web.html в group_vars не действует: переменная
+объявлена в vars/main.yml, а vars сильнее group_vars. Практика 10.
+
+  grep -rn 'web_admin_index_file' roles/web_admin/
+  ansible web1 -m ansible.builtin.debug -a "var=web_admin_index_file"
+
+ПРОБЛЕМА: роль «не видит» файл: Could not find or access 'index.j2'
+
+В сообщении есть блок Searched in: с путём .../templates/index.j2.
+У template это templates/, у copy — files/. Порядок: имя. Практика 10.
+
+  find roles/web_admin -type f | sort
+  grep -n 'src:' roles/web_admin/tasks/main.yml
+
+ПРОБЛЕМА: ERROR! Failed to resolve the requested dependencies map.
+
+Рядом: Could not guarantee that all requirements are compatible with
+each other и No package rhel-system-roles available. Порядок: -vvv,
+потом ослабить диапазон. Практика 15.
+
+  ansible-galaxy install -r requirements.yml -vvv
+  ansible-galaxy collection list
+
+ПРОБЛЕМА: argument_specs отвергает параметр, который выглядит верным
+
+Причина в значении, а не в кавычках: проверка типов приводит значение
+к нужному типу. Опечатка в имени даёт тот же отказ. Практика 15.
+
+  grep -n -A8 'web_admin_port' roles/web_admin/meta/argument_specs.yml
+  grep -rn 'web_admin_port' group_vars/
+
+
+=========================================================================
+11. ХРАНИЛИЩЕ: ДИСКИ, LVM, ФАЙЛОВЫЕ СИСТЕМЫ
+=========================================================================
+
+ПРОБЛЕМА: Device /dev/sdb1 not found.
+
+Так отвечает community.general.filesystem: ядро не увидело раздел.
+Рядом — '/dev/sdb1' is already used as ext4, use force=true to overwrite
+и unknown filesystem type 'xfs'; force: true уничтожит данные. Порядок:
+lsblk, partprobe, blkid. Практика 13.
+
+  lsblk /dev/sdb ; ls -l /dev/sdb1 ; partprobe /dev/sdb
+  blkid /dev/sdb1 /dev/mapper/data-webdata
+
+ПРОБЛЕМА: Error: Partition(s) on /dev/sdb are being used.
+
+Диск занят: смонтирован, активны тома LVM или swap; при umount видно
+target is busy. Порядок: findmnt, lsblk -f, fuser -vm. Практика 13.
+
+  findmnt --source /dev/sdb1 ; lsblk -f /dev/sdb
+  fuser -vm /srv/data
+
+ПРОБЛЕМА: Sorry, no shrinking of webdata without force=true.
+
+Рядом: /dev/mapper/data-webdata needs to be mounted for XFS operations:
+xfs_growfs работает с точкой монтирования. Размер в задаче меньше
+текущего; force: true обрежет ФС. Порядок: lvs, findmnt, df -h. Практика 13.
+
+  lvs --units g ; findmnt /srv/data ; df -h /srv/data
+  grep -n 'size:\|shrink' 03_lvm.yml
+
+
+=========================================================================
+12. КАЧЕСТВО И ИНВЕНТАРИЗАЦИЯ
+=========================================================================
+
+ПРОБЛЕМА: ansible-lint валит прогон на файлах, которые мы сами набрали
+
+Итог Failed: 10 failure(s) — это норма. Нарушения: risky-octal,
+command-instead-of-module, no-changed-when, name[missing]. Чужой код
+убирают в exclude_paths. Практики 3 и 16.
+
+  ansible-lint
+  ansible-lint --version
+
+ПРОБЛЕМА: CRITICAL Driver delegated not found
+
+Драйвера нет в molecule.yml или molecule не установлена полностью.
+Рядом: molecule не находит роль без ANSIBLE_ROLES_PATH. Порядок:
+molecule.yml, потом molecule drivers. Практика 16.
+
+  grep -A2 '^driver:' molecule/default/molecule.yml
+  molecule drivers
+
+ПРОБЛЕМА: внешний инвентарь вернул не тот JSON — забыт _meta
+
+Рядом: кэш не сбрасывается и Unable to parse .../inventory/stand.py
+as an inventory source (нет права на исполнение). Без _meta Ansible
+спрашивает --host по каждой машине. Порядок: ответ, кэш, права. Практика 16.
+
+  python3 inventory/stand.py --list | python3 -m json.tool
+  grep -A5 '^\[inventory\]' ansible.cfg ; chmod +x inventory/stand.py
+
+ПРОБЛЕМА: verify.yml проходит, но проверяет не то
+
+assert без условий или с всегда истинным условием (that: []), либо
+проверка смотрит на переменную, а не на машину. Порядок: каждое условие
+должно относиться к наблюдаемому результату. Практика 16.
+
+  grep -n -A6 'assert' molecule/default/verify.yml
+  molecule verify
+
+
+#########################################################################
+ПОРЯДОК ДИАГНОСТИКИ: С ЧЕГО НАЧАТЬ, ЕСЛИ ПЛЕЙБУК НЕ РАБОТАЕТ
+#########################################################################
+
+Прогон упал, а причина непонятна. Порядок ниже экономит время: каждый
+шаг отсекает целый класс причин. Первый шаг не пропускайте.
+
+  * 1. ПРОВЕРЬТЕ ПОДКЛЮЧЕНИЕ AD-HOC. Одна команда по одной машине
+    отвечает на вопрос, работают ли SSH и Python на узле:
+      ansible web1 -m ansible.builtin.ping
+    UNREACHABLE — это не про плейбук: разбирайтесь с подключением,
+    пока не увидите pong.
+  * 2. ПРОВЕРЬТЕ ИНВЕНТАРЬ И СПИСКИ. Убедитесь, что задача попадает
+    туда, куда вы думаете, и что роли нашлись:
+      ansible-inventory --graph
+      ansible-playbook site.yml --list-hosts
+      ansible-playbook site.yml --list-tasks
+  * 3. ПРОВЕРЬТЕ СИНТАКСИС. Ошибки YAML и опечатки в ключах видно
+    до прогона; при успехе команда молчит:
+      ansible-playbook --syntax-check site.yml
+  * 4. ПРОГОНИТЕ В РЕЖИМЕ ПРОВЕРКИ С ДИФФОМ. Так видно, что плейбук
+    собирается менять, и видно текст шаблонов:
+      ansible-playbook site.yml --check --diff --limit web1
+    Помните: --check не гарантирует, что изменений не будет.
+  * 5. ЗАПУСТИТЕ С -vvv НА ОДНОЙ МАШИНЕ. В подробном выводе смотрите:
+    каким пользователем идёт подключение, какой ключ и какой Python
+    выбран, как раскрылась переменная, что реально ушло на узел:
+      ansible-playbook site.yml --limit web1 -vvv
+  * 6. ИЗОЛИРУЙТЕ ОДНУ ЗАДАЧУ. Скопируйте упавшую задачу в отдельный
+    файл на одном хосте: так видно, дело в самой задаче или в том, что
+    было до неё (не создан каталог, не установлен пакет, не выполнена
+    предыдущая задача).
+  * 7. ПРОВЕРЬТЕ ПОВТОРНЫМ ПРОГОНОМ. Второй прогон без изменений
+    (changed=0) — признак того, что плейбук описывает состояние, а не
+    выполняет действия. changed=1 на второй раз ищите в блоке про
+    идемпотентность.
+  * 8. ПРОЧТИТЕ ansible-doc. Половина ошибок в параметрах снимается
+    до запуска; краткая форма показывает только параметры:
+      ansible-doc ansible.builtin.copy
+      ansible-doc -s ansible.builtin.copy
+  * 9. ИЩИТЕ ПО ТОЧНОМУ ТЕКСТУ ОШИБКИ. Копируйте строку из вывода
+    целиком, вместе с латинскими словами: причина и решение находятся
+    по ней, а не по пересказу.
+
+Ошибки, которых здесь нет, разбираются в самих практиках: в каждой есть
+секция «Если что-то пошло не так». Шпаргалка по командам курса —
+в app_1_commands.txt.

@@ -1,0 +1,30 @@
+---
+# Переменные семейства RedHat (Rocky Linux 10): db1.
+# Файл читается задачей ansible.builtin.include_vars в pre_tasks.
+
+# Те же имена, что и в Debian.yml, но другие значения: в этом
+# и смысл переменных по семейству ОС.
+web_package: httpd
+web_service: httpd
+firewall_package: firewalld
+firewall_service: firewalld
+cron_package: cronie
+cron_service: crond
+sudo_group: wheel
+
+# Порт веб-сервера и имя службы для firewalld: то же намерение,
+# что и на Ubuntu, но выражено зоной и именем службы.
+web_port: 80
+firewalld_service: http
+
+lab_timezone: Europe/Moscow
+
+# python3-firewall — Python-модуль, через который
+# ansible.posix.firewalld разговаривает с firewalld.
+admin_packages:
+  - mc
+  - curl
+  - "{{ cron_package }}"
+  - tzdata
+  - python3-firewall
+  - "{{ web_package }}"

@@ -1,0 +1,51 @@
+1) Vault используется для хранения паролей, создаётся 
+командой:
+ansible-vault create mysecret.txt
+Вводим пароль
+Вводим рандомный пароль
+2) пробуем прочитать:
+cat mysecret.txt
+получаем фигу
+3) но посмотреть можно:
+ansible-vault view mysecret.txt
+4) редактирование:
+ansible-vault edit mysecret.txt
+5) поменять пароль:
+ansible-vault rekey mysecret.txt
+6) создаём плейбук
+---
+- name: Vault Playbook
+  hosts: all
+  become: yes
+
+  vars: 
+    admin_password: SyperPass
+
+  tasks:
+    - name install Tree
+      apt: name=tree
+
+    - name: create config file
+      copy:
+        dest: "/home/engineer/myconfig.conf"
+        content: |
+          port = 5432
+          log = 7days
+          home = /var/lib/postgresql
+          user = postgres
+          password = {{admin_password}}
+
+7) шифруем:
+ansible-vault encrypt playbook_vault.yml
+# дешифровка decrypt
+8) запуск плейбука
+ansible-playbook playbook_vault.yml --ask-vault-pass
+# можно записать пароль в файл, тогда --vault-password-file
+9) можно шифровать переменные
+ansible-vault encript_string
+вводим текст переменной после ввода пароля
+ctrl+d
+копируем вывод в переменную
+вставляем вместо admin_password
+10) ansible-playbook playbook_vault.yml --ask-vault-pass
+

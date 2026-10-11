@@ -1,0 +1,88 @@
+---
+# 02_parted.yml — практика 13, шаг 4: разметка второго диска.
+#
+# ОПАСНО: плейбук размечает диск. Работать только на учебном стенде
+# и только со вторым диском. Запуск такого плейбука на машине с данными
+# уничтожит эти данные: модуль с другим label переписывает таблицу
+# разделов целиком.
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 02_parted.yml
+
+- name: "Разметка второго диска"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Поставить parted и LVM"
+      ansible.builtin.package:
+        name: "{{ storage_packages }}"
+        state: present
+
+    - name: "Проверить, что второй диск существует"
+      ansible.builtin.stat:
+        path: "{{ storage_disk }}"
+      register: disk_stat
+
+    - name: "Посмотреть, что смонтировано со второго диска"
+      ansible.builtin.command:
+        cmd: "lsblk -n -o MOUNTPOINT {{ storage_disk }}"
+      register: disk_mounts
+      changed_when: false
+
+    - name: "Остановиться, если диска нет или с него что-то смонтировано"
+      ansible.builtin.assert:
+        that:
+          - disk_stat.stat.exists
+          - disk_stat.stat.isblk
+          - disk_mounts.stdout | trim == ""
+        fail_msg: >-
+          Диск {{ storage_disk }} не найден или с него что-то смонтировано.
+          Разметка уничтожит данные, поэтому плейбук остановлен.
+        success_msg: "Диск {{ storage_disk }} свободен, можно размечать."
+
+    - name: "Создать таблицу разделов GPT и раздел 1 на весь диск"
+      community.general.parted:
+        device: "{{ storage_disk }}"
+        number: 1
+        label: gpt
+        name: data
+        flags:
+          - lvm
+        state: present
+      register: parted_result
+
+    - name: "Попросить ядро перечитать таблицу разделов"
+      ansible.builtin.command:
+        cmd: "partprobe {{ storage_disk }}"
+      when: parted_result.changed
+
+    - name: "Дождаться, пока ядро увидит раздел"
+      ansible.builtin.command:
+        cmd: "lsblk -n -o NAME {{ storage_partition }}"
+      register: part_check
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: part_check.rc == 0
+
+    - name: "Прочитать сведения о диске после разметки"
+      community.general.parted:
+        device: "{{ storage_disk }}"
+        number: 1
+        unit: MiB
+        state: info
+      register: disk_after
+
+    - name: "Проверить, что раздел создан и помечен флагом lvm"
+      ansible.builtin.assert:
+        that:
+          - disk_after.partitions | length == 1
+          - "'lvm' in disk_after.partitions[0].flags"
+        fail_msg: "Раздела с флагом lvm на {{ storage_disk }} нет."
+        success_msg: "Раздел 1 на {{ storage_disk }} создан и помечен lvm."

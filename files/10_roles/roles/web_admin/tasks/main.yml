@@ -1,0 +1,105 @@
+---
+# Задачи роли web_admin: веб-сервер и учебная страница сайта.
+# Порядок повторяет плейбук практики 7: пакет, страница, служба,
+# межсетевой экран. Имена пакетов, служб и межсетевых экранов
+# берутся из vars/main.yml по факту ansible_os_family.
+
+- name: Проверить, что семейство ОС поддерживается ролью
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in web_admin_supported_families
+    fail_msg: >-
+      Роль web_admin не умеет работать на семействе
+      {{ ansible_os_family }}: поддержаны
+      {{ web_admin_supported_families | join(', ') }}.
+    success_msg: "Семейство {{ ansible_os_family }} поддержано"
+    quiet: true
+
+- name: Взять имена пакетов и служб своего семейства ОС
+  ansible.builtin.set_fact:
+    web_admin_package: "{{ web_admin_family_settings[ansible_os_family].package }}"
+    web_admin_service: "{{ web_admin_family_settings[ansible_os_family].service }}"
+    web_admin_firewall_package: "{{ web_admin_family_settings[ansible_os_family].firewall_package }}"
+
+- name: Установить веб-сервер
+  ansible.builtin.package:
+    name: "{{ web_admin_package }}"
+    state: present
+
+- name: Разложить страницу сайта
+  block:
+    - name: Создать каталог сайта
+      ansible.builtin.file:
+        path: "{{ web_admin_site_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Разложить главную страницу из шаблона
+      ansible.builtin.template:
+        src: index.j2
+        dest: "{{ web_admin_site_root }}/{{ web_admin_index_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      notify:
+        - "web_admin: обновить службу"
+
+    - name: Разложить оформление страницы
+      ansible.builtin.copy:
+        src: style.css
+        dest: "{{ web_admin_site_root }}/{{ web_admin_style_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+  when: web_admin_deploy_site | bool
+
+- name: Включить веб-сервер и держать его запущенным
+  ansible.builtin.systemd_service:
+    name: "{{ web_admin_service }}"
+    state: "{{ web_admin_service_state }}"
+    enabled: "{{ web_admin_service_enabled }}"
+
+- name: Установить межсетевой экран
+  ansible.builtin.package:
+    name: "{{ web_admin_firewall_package }}"
+    state: present
+
+- name: Открыть порты на Ubuntu
+  block:
+    - name: Разрешить порт сайта и порт SSH в ufw
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ web_admin_port }}"
+        - "{{ web_admin_ssh_port }}"
+
+    - name: Включить ufw
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+  when: ansible_os_family == "Debian"
+
+- name: Открыть порт сайта на Rocky Linux
+  block:
+    - name: Включить firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Разрешить порт сайта в firewalld
+      ansible.posix.firewalld:
+        port: "{{ web_admin_port }}/tcp"
+        permanent: true
+        immediate: true
+        state: enabled
+
+  when: ansible_os_family == "RedHat"

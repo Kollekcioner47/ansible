@@ -1,0 +1,11 @@
+/* style.css — оформление учебной страницы роли web_admin.
+   Подстановок Jinja2 нет: файл лежит в files/ и уходит
+   на узел как есть. */
+
+body { margin: 0; padding: 2rem; background: #f5f7fa;
+       color: #1f2933; font-family: "DejaVu Sans", Arial, sans-serif; }
+h1 { margin-top: 0; color: #1d4ed8; }
+p.managed { color: #6b7280; font-size: 0.85rem; }
+table { border-collapse: collapse; background: #ffffff; }
+th, td { border: 1px solid #cbd5e1; padding: 0.4rem 0.8rem;
+         text-align: left; }

@@ -1,0 +1,83 @@
+---
+# 01_regexp.yml — шаги 7 и 8 практики 11.
+# Три параметра sshd одной задачей: loop по списку словарей {regexp, line}.
+# Файл /etc/ssh/sshd_config.d/20-sshd-hardening.conf создаётся из образца
+# conf/sshd_config.in, в котором параметры закомментированы.
+#   ansible-playbook 01_regexp.yml
+# Второй прогон обязан дать changed=0.
+
+- name: "Закрыть sshd: вход root, вход по паролю, число попыток"
+  hosts: web
+  become: true
+  gather_facts: true
+  vars:
+    sshd_dropin: /etc/ssh/sshd_config.d/20-sshd-hardening.conf
+    sshd_settings:
+      - regexp: '^#?\s*PermitRootLogin\s'
+        line: "PermitRootLogin no"
+      - regexp: '^#?\s*PasswordAuthentication\s'
+        line: "PasswordAuthentication no"
+      - regexp: '^#?\s*MaxAuthTries\s'
+        line: "MaxAuthTries 3"
+  tasks:
+    - name: Убедиться, что каталог sshd_config.d существует
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Положить образец конфигурации на место
+      ansible.builtin.copy:
+        src: conf/sshd_config.in
+        dest: "{{ sshd_dropin }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        force: false
+
+    - name: Включить три параметра sshd одной задачей
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        backup: true
+        validate: "sshd -t -f %s"
+      loop: "{{ sshd_settings }}"
+      loop_control:
+        label: "{{ item.line }}"
+      notify: Перезапустить службу SSH
+
+    - name: Убрать строку, которая больше не нужна
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        regexp: '^X11Forwarding\s'
+        state: absent
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+    - name: Заменить строку по точному тексту, а не по выражению
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        search_string: "Banner"
+        line: "Banner /etc/issue.net"
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+    - name: Добавить строку после первой найденной настройки
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_dropin }}"
+        line: "AllowGroups sudo"
+        insertafter: '^#?\s*PermitRootLogin\s'
+        firstmatch: true
+        validate: "sshd -t -f %s"
+      notify: Перезапустить службу SSH
+
+  handlers:
+    - name: Перезапустить службу SSH
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted

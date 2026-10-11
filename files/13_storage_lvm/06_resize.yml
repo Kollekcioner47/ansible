@@ -1,0 +1,39 @@
+---
+# 06_resize.yml — практика 13, шаг 8: расширение логического тома
+# и файловой системы без размонтирования.
+#
+# resizefs: true заставляет модуль расширить и файловую систему:
+# ext4 — через resize2fs, xfs — через xfs_growfs. Разница инструментов
+# от нас скрыта, но знать её нужно: xfs растёт только смонтированным.
+#
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 06_resize.yml
+
+- name: "Расширение логического тома и файловой системы"
+  hosts: linux
+  become: true
+
+  pre_tasks:
+    - name: "Прочитать переменные для семейства ОС"
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: "Расширить логический том вместе с файловой системой"
+      community.general.lvol:
+        vg: "{{ storage_vg }}"
+        lv: "{{ storage_lv }}"
+        size: "{{ storage_lv_size_extended }}"
+        resizefs: true
+        shrink: false
+        state: present
+
+    - name: "Показать размер файловой системы после расширения"
+      ansible.builtin.command:
+        cmd: "df -h {{ storage_mount }}"
+      register: df_after
+      changed_when: false
+
+    - name: "Вывести размер после расширения"
+      ansible.builtin.debug:
+        var: df_after.stdout_lines

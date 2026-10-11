@@ -1,0 +1,37 @@
+# {{ ansible_managed }}
+# Виртуальный хост {{ nginx_server_name }} собран из шаблона nginx_vhost.j2.
+# В upstream уходят только пути nginx_locations с type: proxy.
+
+server {
+    listen {{ nginx_port | default(8080) }};
+    listen [::]:{{ nginx_port | default(8080) }};
+    server_name {{ nginx_server_name }};
+
+    root {{ nginx_root }};
+    index {{ nginx_index }};
+    client_max_body_size {{ nginx_client_max_body_size | default('1m') }};
+
+    access_log /var/log/nginx/{{ nginx_server_name | regex_replace('[^A-Za-z0-9.-]', '_') }}.access.log;
+
+{% for location in nginx_locations %}
+    location {{ location.path }} {
+{% if location.type == 'proxy' %}
+        proxy_pass http://{{ nginx_upstream_name }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Site-Tag $site_tag;
+{% else %}
+        root {{ location.root | default(nginx_root) }};
+{% if location.expires is defined %}
+        expires {{ location.expires }};
+{% endif %}
+{% endif %}
+    }
+{% endfor %}
+{% if nginx_extra_headers is defined %}
+{% for header in nginx_extra_headers %}
+    add_header {{ header.name }} "{{ header.value }}" always;
+{% endfor %}
+{% endif %}
+}

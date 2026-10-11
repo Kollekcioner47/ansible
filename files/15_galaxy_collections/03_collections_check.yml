@@ -1,0 +1,66 @@
+---
+# 03_collections_check.yml — проверить, что и какой версии стоит.
+#
+# Плейбук ничего не меняет: он спрашивает ansible-galaxy о списке
+# установленных коллекций и проверяет, что нужные на месте.
+#
+# hosts: localhost и connection: local означают, что команда
+# выполняется на управляющей машине, а не на узле стенда.
+#
+# Запуск из каталога проекта:
+#
+#   cd ~/ansible-lab/15_galaxy
+#   ansible-playbook 03_collections_check.yml
+
+- name: Проверить установленные коллекции
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    required_collections:
+      - ansible.posix
+      - community.general
+
+  tasks:
+    - name: Получить список коллекций в формате JSON
+      ansible.builtin.command:
+        argv:
+          - ansible-galaxy
+          - collection
+          - list
+          - --format
+          - json
+      register: collections_json
+      changed_when: false
+
+    - name: Разобрать ответ в словарь «каталог — коллекции»
+      ansible.builtin.set_fact:
+        collections_by_path: "{{ collections_json.stdout | from_json }}"
+
+    # dict2items превращает словарь в список пар «ключ — значение»,
+    # flatten склеивает списки из всех каталогов. В результате
+    # item.0 — полное имя коллекции, item.1 — словарь с версией.
+    - name: Собрать пары «коллекция — версия» в один словарь
+      ansible.builtin.set_fact:
+        collection_versions: >-
+          {{ collection_versions | default({}) | combine({ item.0: item.1.version }) }}
+      loop: "{{ collections_by_path.values() | map('dict2items') | flatten }}"
+      loop_control:
+        label: "{{ item.0 }}"
+
+    - name: Показать установленные и нужные коллекции
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }} — {{ collection_versions[item] | default('не установлена') }}
+      loop: "{{ required_collections }}"
+
+    - name: Проверить, что все нужные коллекции установлены
+      ansible.builtin.assert:
+        that:
+          - item in collection_versions
+        fail_msg: >-
+          Коллекция {{ item }} не найдена. Установите её командой
+          ansible-galaxy install -r requirements.yml
+        success_msg: "{{ item }} {{ collection_versions[item] }}"
+      loop: "{{ required_collections }}"

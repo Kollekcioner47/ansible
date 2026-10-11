@@ -1,0 +1,66 @@
+---
+# 05_find_age.yml — шаг 12 практики 11.
+# find: patterns, age, size, recurse, register и обработка найденного.
+# Плейбук удаляет только старые копии конфигураций (*.bak, *~),
+# большие журналы он показывает, но не трогает.
+# Учебная заготовка включается переменной find_make_fixtures:
+# прогон с -e find_make_fixtures=false показывает поведение
+# на настоящем парке и обязан дать changed=0.
+#   ansible-playbook 05_find_age.yml
+#   ansible-playbook 05_find_age.yml -e find_make_fixtures=false
+
+- name: Убрать старые копии конфигураций и посмотреть на большие журналы
+  hosts: web
+  become: true
+  gather_facts: false
+  vars:
+    find_make_fixtures: true
+    backup_patterns:
+      - '*.bak'
+      - '*~'
+  tasks:
+    - name: Подготовить учебные старые копии
+      ansible.builtin.command:
+        cmd: "touch -d '30 days ago' {{ item }}"
+        creates: "{{ item }}"
+      loop:
+        - /etc/ssh/sshd_config.bak
+        - /etc/hosts.bak
+      when: find_make_fixtures | bool
+
+    - name: Найти копии старше недели
+      ansible.builtin.find:
+        paths: /etc
+        patterns: "{{ backup_patterns }}"
+        age: +7d
+        recurse: true
+        file_type: file
+      register: old_backups
+
+    - name: Показать, что нашлось
+      ansible.builtin.debug:
+        msg: >-
+          Найдено копий: {{ old_backups.matched }} —
+          {{ old_backups.files | map(attribute='path') | list }}
+
+    - name: Удалить найденные копии
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Найти журналы больше 10 МБ старше недели
+      ansible.builtin.find:
+        paths: /var/log
+        patterns: '*.log'
+        age: +1w
+        size: '+10M'
+        recurse: true
+        file_type: file
+      register: big_logs
+
+    - name: Показать большие журналы, ничего не удаляя
+      ansible.builtin.debug:
+        msg: "Журналов больше 10 МБ старше недели: {{ big_logs.matched }}."

@@ -1,0 +1,56 @@
+# 01_when.yml — шаг 2 практики 7: условия when.
+# Плейбук ничего не меняет на узлах: только проверки.
+
+---
+- name: Условия по фактам, переменным и результату задачи
+  hosts: web:db
+  become: false
+  gather_facts: true
+
+  vars:
+    web_port: 80
+    allowed_families:
+      - Debian
+      - RedHat
+
+  tasks:
+    - name: Показать семейство ОС и дистрибутив узла
+      ansible.builtin.debug:
+        msg: "{{ ansible_os_family }} / {{ ansible_distribution }}"
+
+    - name: Условие по факту с отрицанием
+      ansible.builtin.debug:
+        msg: "Это не Ubuntu: пакет веб-сервера называется httpd"
+      when: ansible_os_family != "Debian"
+
+    - name: Условие по списку и по группе инвентаря
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} поддержан и не входит в группу db"
+      when:
+        - ansible_os_family in allowed_families
+        - inventory_hostname not in groups['db']
+
+    - name: Условие со скобками и по переменной
+      ansible.builtin.debug:
+        msg: "Семейство поддержано, порт равен {{ web_port }}"
+      when: >
+        (ansible_os_family == "Debian" or ansible_os_family == "RedHat")
+        and web_port == 80
+
+    - name: Условие по необъявленной переменной
+      ansible.builtin.debug:
+        msg: "Переменная ssl_certificate_path не объявлена"
+      when: ssl_certificate_path is not defined
+
+    - name: Прочитать имя узла из файла
+      ansible.builtin.command:
+        cmd: cat /etc/hostname
+      register: hostname_file
+      changed_when: false
+
+    - name: Условие по результату задачи
+      ansible.builtin.debug:
+        msg: "hostname: {{ hostname_file.stdout_lines[0] }}"
+      when:
+        - hostname_file.rc == 0
+        - hostname_file.stdout | length > 0

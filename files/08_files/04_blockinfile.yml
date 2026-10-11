@@ -1,0 +1,32 @@
+---
+# 04_blockinfile.yml — шаг 9 практики 8.
+# Блок строк в /etc/hosts с маркерами BEGIN и END.
+# Содержимое блока лежит отдельным файлом conf/hosts.append.
+#   ansible-playbook 04_blockinfile.yml
+# Второй прогон обязан дать changed=0.
+
+- name: Управлять блоком в /etc/hosts
+  hosts: web
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Добавить машины стенда в /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: "{{ lookup('ansible.builtin.file', 'conf/hosts.append') }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK: стенд курса"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+
+    - name: Прочитать блок, который сейчас в файле
+      ansible.builtin.command:
+        cmd: grep -A6 'BEGIN ANSIBLE MANAGED BLOCK' /etc/hosts
+      register: hosts_block
+      changed_when: false
+      failed_when: hosts_block.rc not in [0, 1]
+
+    - name: Показать строки блока
+      ansible.builtin.debug:
+        var: hosts_block.stdout_lines

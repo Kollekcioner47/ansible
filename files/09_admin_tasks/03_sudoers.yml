@@ -1,0 +1,22 @@
+---
+# 03_sudoers.yml — практика 9, шаг 4: правило sudo из шаблона.
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 03_sudoers.yml
+
+- name: Правило sudo из шаблона
+  hosts: linux
+  become: true
+
+  vars:
+    # Имя пользователя, которому разрешён sudo без пароля.
+    sudo_user: engineer
+
+  tasks:
+    - name: Создать файл sudoers для engineer
+      ansible.builtin.template:
+        src: templates/engineer-nopass.j2
+        dest: /etc/sudoers.d/engineer-nopass
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "/usr/sbin/visudo -cf %s"

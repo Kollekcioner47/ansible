@@ -1,0 +1,52 @@
+---
+# 02_users.yml — практика 9, шаг 3: пользователи, группы и ключ.
+# Запуск из каталога ~/ansible-lab:
+#   ansible-playbook 02_users.yml
+
+- name: Пользователи и группы на парке Linux
+  hosts: linux
+  become: true
+
+  vars:
+    # Открытый ключ engineer с управляющей машины (сделан в практике 1).
+    engineer_public_key: /home/engineer/.ssh/id_ed25519.pub
+    # Учебный пароль Console47. В плейбук попадает только хэш:
+    # фильтр password_hash считает его на управляющей машине.
+    # Соль задана явно, иначе хэш менялся бы на каждом прогоне.
+    deploy_password: "{{ 'Console47' | password_hash('sha512', 'ansible9salt') }}"
+
+  pre_tasks:
+    - name: Прочитать переменные для семейства ОС
+      ansible.builtin.include_vars:
+        file: "vars/{{ ansible_os_family }}.yml"
+
+  tasks:
+    - name: Создать группу для службы выкладки
+      ansible.builtin.group:
+        name: deploy
+        state: present
+
+    - name: Создать пользователя deploy
+      ansible.builtin.user:
+        name: deploy
+        comment: "Учебная учётная запись для выкладки"
+        group: deploy
+        groups: "{{ sudo_group }}"
+        append: true
+        shell: /bin/bash
+        create_home: true
+        password: "{{ deploy_password }}"
+        state: present
+
+    - name: Раздать пользователю deploy открытый ключ engineer
+      ansible.posix.authorized_key:
+        user: deploy
+        key: "{{ lookup('file', engineer_public_key) }}"
+        exclusive: true
+        state: present
+
+    - name: Убрать учебного пользователя intern вместе с каталогом
+      ansible.builtin.user:
+        name: intern
+        state: absent
+        remove: true

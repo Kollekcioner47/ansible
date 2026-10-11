@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>{{ site_title | default('Учебный стенд курса Ansible') }} — {{ inventory_hostname }}</title>
+</head>
+<body>
+  <h1>Машина {{ inventory_hostname }}</h1>
+  <p>{{ ansible_managed }}</p>
+
+  <table border="1">
+    <tr><th>Имя машины</th><td>{{ ansible_facts['hostname'] }}</td></tr>
+    <tr><th>Адрес</th><td>{{ ansible_facts['default_ipv4']['address'] }}</td></tr>
+    <tr><th>Семейство ОС</th><td>{{ ansible_facts['os_family'] }}</td></tr>
+    <tr><th>Дистрибутив</th><td>{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}</td></tr>
+    <tr><th>Ядер</th><td>{{ ansible_facts['processor_vcpus'] }}</td></tr>
+    <tr><th>Память, МБ</th><td>{{ ansible_facts['memtotal_mb'] }}</td></tr>
+    <tr><th>Владелец машины</th><td>{{ ansible_local.site.general.owner | default(site_owner_default) }}</td></tr>
+    <tr><th>Роль машины</th><td>{{ ansible_local.site.general.role | default('не назначена') }}</td></tr>
+  </table>
+
+  <h2>Машины парка</h2>
+  <ul>
+{% for host in groups['linux'] %}
+    <li>{{ host }} — {{ hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') }}</li>
+{% endfor %}
+  </ul>
+
+  <p>Группы этой машины: {{ group_names | join(', ') }}</p>
+  <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_date_time.iso8601 }}</p>
+</body>
+</html>

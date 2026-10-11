@@ -1,0 +1,45 @@
+---
+# verify.yml — проверка результата после converge: служба запущена,
+# файл сайта на месте, порт 80 отвечает. Каждая проверка —
+# ansible.builtin.assert: если условие ложно, play падает с fail_msg.
+- name: Проверить, что роль web_admin сделала обещанное
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Собрать сведения о службах машины
+      ansible.builtin.service_facts:
+    - name: Проверить, что веб-сервер запущен и в автозапуске
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['services']['apache2.service']['state'] == 'running'
+          - ansible_facts['services']['apache2.service']['status'] == 'enabled'
+        fail_msg: "Служба apache2 на {{ inventory_hostname }} не запущена или не включена в автозапуск"
+        quiet: true
+    - name: Узнать, что лежит на месте страницы сайта
+      ansible.builtin.stat:
+        path: /var/www/html/index.html
+      register: web_admin_index
+    - name: "Проверить страницу сайта: файл, права, владелец"
+      ansible.builtin.assert:
+        that:
+          - web_admin_index.stat.exists
+          - web_admin_index.stat.isreg
+          - web_admin_index.stat.mode == '0644'
+          - web_admin_index.stat.pw_name == 'root'
+        fail_msg: "Файла /var/www/html/index.html на {{ inventory_hostname }} нет или у него не те права"
+        quiet: true
+    - name: Запросить страницу сайта по сети
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/index.html"
+        status_code: 200
+        return_content: true
+      register: web_admin_page
+    - name: Проверить, что порт 80 слушается и отдаёт нужную страницу
+      ansible.builtin.assert:
+        that:
+          - web_admin_page.status == 200
+          - "'Учебный стенд' in web_admin_page.content"
+          - inventory_hostname in web_admin_page.content
+        fail_msg: "Порт 80 на {{ inventory_hostname }} не отвечает или отдаёт не ту страницу"
+        quiet: true

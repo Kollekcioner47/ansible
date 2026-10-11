@@ -1,0 +1,58 @@
+---
+# 05_archive.yml — шаг 13 практики 8.
+# Сборка каталога сайта в архив, выгрузка на управляющую машину
+# и распаковка архива на узле.
+#   ansible-playbook 05_archive.yml
+# Второй прогон даёт changed=0 у задач file и unarchive,
+# задача archive пересобирает архив: это ожидаемо.
+
+- name: Собрать сайт в архив и распаковать его в другом месте
+  hosts: web
+  become: true
+  gather_facts: true
+  vars:
+    site_dir: /var/www/html/site
+    build_dir: /srv/site_build
+    archive_path: "/tmp/site-{{ inventory_hostname }}.tar.gz"
+  tasks:
+    - name: Убедиться, что каталог сборки существует
+      ansible.builtin.file:
+        path: "{{ build_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Упаковать каталог сайта в архив
+      ansible.builtin.archive:
+        path:
+          - "{{ site_dir }}"
+        dest: "{{ archive_path }}"
+        format: gz
+        mode: "0640"
+
+    - name: Забрать архив на управляющую машину
+      ansible.builtin.fetch:
+        src: "{{ archive_path }}"
+        dest: "backup/{{ inventory_hostname }}/"
+        flat: true
+
+    - name: Показать содержимое архива
+      ansible.builtin.command:
+        cmd: "tar -tzf {{ archive_path }}"
+      register: archive_list
+      changed_when: false
+
+    - name: Показать список файлов в архиве
+      ansible.builtin.debug:
+        var: archive_list.stdout_lines
+
+    - name: Распаковать архив на узле, если он ещё не распакован
+      ansible.builtin.unarchive:
+        src: "{{ archive_path }}"
+        dest: "{{ build_dir }}"
+        remote_src: true
+        creates: "{{ build_dir }}/site/index.html"
+        owner: root
+        group: root
+        mode: "0644"

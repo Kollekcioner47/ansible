@@ -1,0 +1,7 @@
+---
+# Переменные семейства RedHat (Rocky Linux 10: db1).
+web_package: httpd
+web_service: httpd
+web_config_dir: /etc/httpd/conf.d
+web_root: /var/www/html
+firewall_package: firewalld

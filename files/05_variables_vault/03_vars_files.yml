@@ -1,0 +1,50 @@
+---
+# vars_files подключает файл переменных целиком. Файл vars/app.yml
+# лежит рядом с плейбуком, в каталоге vars, и его переменные сильнее
+# переменных, записанных в vars этого же play.
+
+- name: Настроить приложение по переменным из файла
+  hosts: web
+  gather_facts: false
+  become: true
+
+  vars_files:
+    - vars/app.yml
+
+  # Значение для опыта: файл из vars_files сильнее этой строки.
+  vars:
+    web_port: 8081
+
+  tasks:
+    - name: Показать переменные из vars/app.yml
+      ansible.builtin.debug:
+        msg:
+          - "приложение: {{ app_name }}"
+          - "версия: {{ app_version }}"
+          - "каталог: {{ app_root }}"
+          - "порт: {{ web_port }}"
+
+    - name: Убедиться, что секрет дошёл до узла
+      # assert проверяет предположение: при ложном условии задача
+      # падает с fail_msg. Подробнее — практика 6.
+      ansible.builtin.assert:
+        that:
+          - db_password is defined
+          - db_password | length > 0
+        fail_msg: "секрет не получен: проверьте vault.yml и пароль Vault"
+        success_msg: "пароль из Vault получен"
+        quiet: true
+
+    - name: Создать файл настроек приложения
+      ansible.builtin.copy:
+        dest: "{{ app_root }}/app.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Файл создан плейбуком 03_vars_files.yml
+          name = {{ app_name }}
+          version = {{ app_version }}
+          port = {{ web_port }}
+          db_password = {{ db_password }}
+      no_log: true

@@ -1,0 +1,6 @@
+[Unit]
+Description=Проверка часового пояса узла {{ inventory_hostname }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/timedatectl show --property=Timezone

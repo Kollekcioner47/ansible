@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Файл собран из шаблона nginx_upstream.j2.
+# Бэкенды: {{ nginx_backends | map(attribute='name') | join(', ') }}
+# Метки сайтов приходят строкой YAML: шаблон превращает её в данные.
+{% set site_tags = nginx_site_tags_raw | from_yaml %}
+{% set live_backends = nginx_backends | selectattr('enabled') | list %}
+
+map $host $site_tag {
+{% for site, tag in site_tags.items() %}
+    {{ '%-28s' | format(site) }} {{ tag }};
+{% endfor %}
+    default                      unknown;
+}
+
+upstream {{ nginx_upstream_name }} {
+{% for backend in live_backends %}
+    server {{ backend.address }} weight={{ backend.weight | default(1) }} max_fails={{ backend.max_fails | default(2) }};
+{% endfor %}
+    keepalive {{ live_backends | length }};
+}

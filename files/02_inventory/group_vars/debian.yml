@@ -1,0 +1,8 @@
+---
+# Переменные для машин семейства Debian (Ubuntu: web1 и web2).
+
+# Имена служб и пакетов на Ubuntu отличаются от Rocky Linux.
+ssh_service: ssh
+web_package: apache2
+web_service: apache2
+firewall_package: ufw

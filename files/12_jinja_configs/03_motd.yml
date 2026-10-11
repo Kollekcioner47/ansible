@@ -1,0 +1,80 @@
+---
+# Практика 12, шаги 8–9: motd, resolv.conf и chrony.conf из шаблонов.
+# Запуск: ansible-playbook 03_motd.yml --diff
+
+- name: "Разложить /etc/motd на всех машинах группы linux"
+  hosts: linux
+  become: true
+  tasks:
+    - name: "Собрать /etc/motd из шаблона motd.j2"
+      ansible.builtin.template:
+        src: motd.j2
+        dest: /etc/motd
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        backup: true
+
+- name: "Настроить /etc/resolv.conf из переменных"
+  hosts: linux
+  become: true
+  vars:
+    resolv_nameservers:
+      - "10.0.2.3"
+      - "1.1.1.1"
+    resolv_search:
+      - "ansible-lab.local"
+    resolv_timeout: 2
+    resolv_attempts: 2
+  tasks:
+    - name: "Собрать /etc/resolv.conf из шаблона resolv.conf.j2"
+      ansible.builtin.template:
+        src: resolv.conf.j2
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        backup: true
+
+- name: "Настроить chrony на машинах семейства RedHat"
+  hosts: redhat
+  become: true
+  vars:
+    chrony_config_path: "/etc/chrony.conf"
+    chrony_service: "chronyd"
+    chrony_driftfile: "/var/lib/chrony/drift"
+    chrony_logdir: "/var/log/chrony"
+    chrony_pools:
+      - "0.pool.ntp.org"
+      - "1.pool.ntp.org"
+    # В рабочей среде здесь адрес корпоративного сервера времени.
+    # В стенде такого сервера нет, поэтому список пуст: шаблон
+    # напечатает только строки pool.
+    chrony_servers: []
+  handlers:
+    - name: "Перезапустить chronyd"
+      ansible.builtin.systemd_service:
+        name: "{{ chrony_service }}"
+        state: restarted
+  tasks:
+    - name: "Собрать конфигурацию chrony из шаблона chrony.conf.j2"
+      ansible.builtin.template:
+        src: chrony.conf.j2
+        dest: "{{ chrony_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        trim_blocks: true
+        lstrip_blocks: true
+        backup: true
+      notify: Перезапустить chronyd
+
+    - name: "Включить chronyd в автозапуск и запустить"
+      ansible.builtin.systemd_service:
+        name: "{{ chrony_service }}"
+        state: started
+        enabled: true

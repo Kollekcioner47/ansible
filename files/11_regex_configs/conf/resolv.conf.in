@@ -1,0 +1,13 @@
+# Образец /etc/resolv.conf для учебного стенда.
+# Копируется на узел как /etc/resolv.conf.lab задачей copy из 04_replace.yml
+# и правится задачами ansible.builtin.replace.
+# Живой /etc/resolv.conf на Ubuntu не правим: им управляет systemd-resolved.
+# Имена машин в стенде разрешаются через /etc/hosts, DNS нужен только
+# для доступа в интернет.
+# Содержимое совпадает с напечатанным в 11_regex_configs.txt.
+
+nameserver 10.0.2.3
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+search lan
+options timeout:2 attempts:2

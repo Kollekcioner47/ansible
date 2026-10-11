@@ -1,0 +1,35 @@
+---
+# Результат задачи как данные: register сохраняет ответ модуля
+# в переменную этого хоста, set_fact считает новое значение прямо
+# во время прогона.
+
+- name: Собрать сведения об узле и посчитать итог
+  hosts: linux
+  gather_facts: false
+
+  tasks:
+    - name: Узнать дату на узле
+      ansible.builtin.command:
+        cmd: date +%Y-%m-%d
+      register: date_result
+      changed_when: false
+
+    - name: Показать весь результат задачи целиком
+      ansible.builtin.debug:
+        var: date_result
+
+    - name: Показать отдельные поля результата
+      ansible.builtin.debug:
+        msg:
+          - "rc: {{ date_result.rc }}"
+          - "stdout: {{ date_result.stdout }}"
+          - "stderr: {{ date_result.stderr }}"
+          - "changed: {{ date_result.changed }}"
+
+    - name: Посчитать переменную во время прогона
+      ansible.builtin.set_fact:
+        report_line: "{{ inventory_hostname }}: проверено {{ date_result.stdout }}"
+
+    - name: Показать посчитанное значение
+      ansible.builtin.debug:
+        var: report_line

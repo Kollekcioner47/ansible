@@ -1,0 +1,21 @@
+---
+# requirements.min.yml — минимальный набор для стенда курса.
+#
+# Здесь только то, без чего не работает своя роль web_admin: две
+# коллекции. Готовых ролей из Galaxy в этом файле нет намеренно:
+# роль nginx — учебный пример, а не зависимость стенда.
+#
+# Установка:
+#
+#   ansible-galaxy collection install -r requirements.min.yml
+#
+# Сам ansible-core этим файлом не ставится: ansible-galaxy умеет
+# ставить только роли и коллекции, а движок ставится pip в
+# виртуальное окружение (практика 1).
+
+collections:
+  - name: ansible.posix
+    version: ">=1.5.4,<2.0.0"
+
+  - name: community.general
+    version: ">=8.0.0"

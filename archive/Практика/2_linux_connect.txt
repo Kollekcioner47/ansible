@@ -1,0 +1,88 @@
+Сначала генерируем ssh-ключ на сервере
+Введение
+Использование SSH-ключей — простой и надежный способ обеспечения безопасности соединения с сервером.  В отличие от пароля, взломать SSH-ключ практически невозможно. Сгенерировать SSH-ключ очень просто.
+
+SSH-ключ для Linux/MacOS
+Откройте терминал и выполните команду:
+
+
+$ ssh-keygen -t rsa
+На консоль будет выведен следующий диалог:
+
+
+Enter file in which to save the key (/home/user/.ssh/id_rsa):
+Нажмите на клавишу Enter.  Далее система предложит ввести кодовую фразу для дополнительной защиты SSH-подключения:
+
+
+Enter passphrase (empty for no passphrase):
+Этот шаг можно пропустить. При ответе на этот и следующий вопрос просто нажмите клавишу Enter.
+
+После этого ключ будет создан, а на консоль будет выведено следующее сообщение:
+
+
+Your identification has been saved in /home/user/.ssh/id_rsa.
+Your public key has been saved in /home/user/.ssh/id_rsa.pub.
+The key fingerprint is:
+476:b2:a8:7f:08:b4:c0:af:81:25:7e:21:48:01:0e:98 user@localhost
+
+The key's randomart image is:
+
++--[ RSA 2048]----+
+
+|+.o.             |
+
+|ooE              |
+
+|oo               |
+
+|o.+..            |
+
+|.+.+..  S .      |
+
+|....+  o +       |
+
+|  .o ....        |
+
+|  .  .. .        |
+
+|    ....         |
+
++-----------------+
+Далее выполните в терминале команду:
+
+
+$ cat ~/.ssh/id_rsa.pub
+И вы увидите ключ
+дальше нужно скопировать ключ на клиент, либо файликом либо командой
+ssh-copy-id ip-клиента
+
+На клиента
+
+утановим openssh
+sudo apt install openssh-server
+в /etc/ssh/sshd_config раскоментировать строчки 
+PubkeyAuthentication yes
+PermitRootLogin yes
+не забудьте разрешить подключение
+sudo ufw allow 22/tcp
+перезапускаем сервис sshd
+sudo systemctl restart ssh
+
+переходим на мастер
+создадим папку проекта и перейдём в неё
+mkdir ansible
+cd ansible
+создадим host файл со списком клиентов
+vim hosts.txt
+и введём инструкцию
+[my_servers]
+linux_client1 ansible_host= вводим ip ansible_user=имя юзера ansible_ssh_private_key_file= путь к файлу id_rsa, например /home/engineer/.ssh/id_rsa
+
+проверяем работу ansible
+ansible -i hosts.txt all -m ping
+подтвержаем импорт ключей
+мы должны получить ответ
+"ping": "pong"
+
+
+

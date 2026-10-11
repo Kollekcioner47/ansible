@@ -1,0 +1,399 @@
+Приложение 1. Шпаргалка по командам Ansible.
+
+ЭТО КАРМАННЫЙ СПРАВОЧНИК К КУРСУ: КОМАНДЫ, КЛЮЧИ И МОДУЛИ ПО ТЕМАМ
+ПРАКТИК 1-16. ГДЕ КЛЮЧ ИЛИ ЗНАЧЕНИЕ В ПРАКТИКАХ НЕ ВСТРЕЧАЮТСЯ,
+ЭТО СКАЗАНО ПРЯМО, ЧТОБЫ ШПАРГАЛКА НЕ ВЫДАВАЛА ЛИШНЕГО ЗА КУРС.
+Стенд: control 10.0.2.5, web1 10.0.2.11, web2 10.0.2.12, db1 10.0.2.13,
+пользователь engineer, каталог /home/engineer/ansible-lab,
+ansible-core 2.19.
+
+=========================================================================
+1. УСТАНОВКА И ОКРУЖЕНИЕ
+=========================================================================
+
+Ansible ставится только на control: в репозитории Ubuntu версия
+отстаёт, установка в системный Python запрещена (PEP 668).
+  sudo apt update
+  sudo apt install -y python3-venv
+  python3 -m venv ~/ansible-venv
+  source ~/ansible-venv/bin/activate
+  pip install ansible
+  ansible --version
+Окружение активируют в каждом сеансе терминала, иначе «ansible:
+command not found». В выводе --version важны: ansible [core 2.19.0],
+config file (взятый файл; None — файла нет) и ansible python module
+location — путь должен вести в ~/ansible-venv.
+  ansible-config dump | grep -i forks
+  ansible-config dump --only-changed
+  ansible-config list
+dump печатает настройки с пометкой (default) или именем файла, из
+которого значение взято; --only-changed оставляет только отличия;
+list — полный перечень настроек с описаниями.
+ЧЕТЫРЕ МЕСТА ПОИСКА ansible.cfg, читается только первый найденный:
+  * ANSIBLE_CONFIG — переменная окружения, сильнее всех;
+  * ./ansible.cfg — файл в текущем каталоге;
+  * ~/.ansible.cfg — файл в домашнем каталоге пользователя;
+  * /etc/ansible/ansible.cfg — общесистемный файл.
+Переменные окружения сильнее файла: ANSIBLE_FORKS=2 перекроет forks = 10.
+
+=========================================================================
+2. ИНВЕНТАРЬ
+=========================================================================
+
+Инвентарь — машины, группы и переменные. В курсе это файл
+/home/engineer/ansible-lab/inventory.ini, формат INI:
+  [web]
+  web1 ansible_host=10.0.2.11
+  web2 ansible_host=10.0.2.12
+  [db]
+  db1 ansible_host=10.0.2.13
+  [linux:children]
+  web
+  db
+  [debian:children]
+  web
+  [redhat:children]
+  db
+[linux:children] — группа из групп. Группа all есть всегда, ungrouped
+собирает машины без группы; адрес машины — переменная ansible_host.
+Тот же инвентарь бывает в формате YAML (all → children → web → hosts →
+web1), в курсе применяется INI.
+ПЕРЕМЕННЫЕ ПОДКЛЮЧЕНИЯ лежат в group_vars и host_vars рядом
+с инвентарём или плейбуком:
+  # group_vars/all.yml
+  ansible_user: engineer
+  ansible_ssh_private_key_file: /home/engineer/.ssh/id_ed25519
+  # group_vars/debian.yml (Ubuntu) / group_vars/redhat.yml (Rocky)
+  web_package: apache2    # в redhat.yml — httpd
+  firewall_package: ufw   # в redhat.yml — firewalld
+Переменные хоста сильнее групповых; группа all слабее любой другой.
+  ansible-inventory --graph
+  ansible-inventory --list
+  ansible-inventory --host web1
+  ansible-inventory -i inventory/stand.py --graph
+  ansible-inventory --yaml
+--graph печатает дерево групп, --list — весь инвентарь в JSON,
+--host — переменные одной машины, --yaml (не из практик) — то же
+в YAML. Видны только переменные инвентаря, без vars и --extra-vars.
+ШАБЛОНЫ ХОСТОВ (patterns) ищут имя из инвентаря, а не адрес, и берутся
+в кавычки: & и ! в оболочке значат другое.
+  ansible 'web*' --list-hosts
+  ansible 'web:&debian' --list-hosts
+  ansible 'linux:!db1' --list-hosts
+  ansible 'all' --list-hosts
+  ansible all --limit 'web:&debian' -m ansible.builtin.ping
+& — пересечение, ! — исключение; '!db1' то же самое, что 'all:!db1'.
+Ключ -i задаёт файл, список адресов или скрипт; у единственного адреса
+в списке нужна запятая на конце, иначе Ansible примет строку за файл:
+  ansible all -i /home/engineer/ansible-lab/inventory.ini -m ansible.builtin.ping
+  ansible all -i '10.0.2.11,10.0.2.12,10.0.2.13' -m ansible.builtin.ping
+  ansible all -i '10.0.2.11,' -m ansible.builtin.ping
+
+=========================================================================
+3. AD-HOC КОМАНДЫ
+=========================================================================
+
+  ansible <образец машин> -m <модуль> -a "<параметры>" [ключи]
+Ключи:
+  * -m — модуль; короткие имена (ping, apt) в ad-hoc разрешены;
+  * -a — параметры модуля одной строкой в кавычках;
+  * -b — become, повышение прав до root через sudo;
+  * -K, --ask-become-pass — спросить пароль sudo; на стенде sudo без
+    пароля, поэтому в практиках ключ не применяется;
+  * -u engineer — пользователь подключения (задан в ansible.cfg);
+  * -i — инвентарь; -f — машин параллельно (forks, умолчание 5);
+  * --limit — сузить выбор машин; -v, -vv, -vvv — подробность вывода;
+  * -e, --check, --diff — работают и здесь (в практиках — у playbook).
+Примеры на модулях курса:
+  ansible all -m ansible.builtin.ping
+  ansible linux -m ansible.builtin.command -a "hostname"
+  ansible web1 -m ansible.builtin.shell -a 'echo $HOME'
+  ansible web -m ansible.builtin.copy -a "src=/home/engineer/ansible-lab/yaml/01_scalars.yml dest=/tmp/01_scalars.yml mode=0644"
+  ansible web -m ansible.builtin.file -a "path=/tmp/ansible-lab state=directory mode=0755"
+  ansible web -m ansible.builtin.get_url -a "url=https://example.com/ dest=/tmp/example_index.html mode=0644"
+  ansible web -m ansible.builtin.apt -a "name=mc state=present update_cache=true" -b
+  ansible db1 -m ansible.builtin.dnf -a "name=python3 state=present" -b
+  ansible db1 -m ansible.builtin.systemd_service -a "name=sshd state=started enabled=true" -b
+  ansible db1 -m ansible.builtin.setup -a "filter=ansible_os_family"
+ЧЕГО НЕ ДЕЛАТЬ: command и shell.
+  * command запускает программу без оболочки: конвейеры, перенаправления и $HOME в нём не работают;
+  * shell запускает команду через /bin/sh -c: оболочка есть, но
+    Ansible не знает, изменила ли команда состояние, и всегда
+    показывает changed;
+  * где есть модуль, пишут модуль: apt вместо shell с apt-get,
+    systemd_service вместо shell с systemctl.
+
+=========================================================================
+4. ПЛЕЙБУКИ
+=========================================================================
+
+  ansible-playbook site.yml
+  ansible-playbook site.yml -e web_port=8082
+  ansible-playbook 03_vars_files.yml -e @extra_vars.yml
+Проверки до запуска:
+  ansible-playbook --syntax-check site.yml
+  ansible-playbook --list-tasks site.yml
+  ansible-playbook --list-hosts site.yml
+  ansible-playbook --list-tags site.yml -i inventory/dev.ini
+  ansible-playbook --check --diff site.yml
+Часть плейбука и пароли:
+  ansible-playbook site.yml --tags install
+  ansible-playbook site.yml --skip-tags report
+  ansible-playbook site.yml --ask-become-pass
+  ansible-playbook site.yml --ask-vault-pass
+  ansible-playbook site.yml --vault-password-file ~/.vault_pass
+Ключи, которых в практиках нет, — для справки:
+  ansible-playbook site.yml --start-at-task="Установить веб-сервер"
+  ansible-playbook site.yml --step
+  ansible-playbook site.yml --forks 10
+КОЛОНКИ PLAY RECAP (сводка печатается последней, по каждой машине):
+  * ok — задачи завершились успешно; changed — частный случай успеха;
+  * changed — задачи изменили состояние машины, это итог прогона;
+  * unreachable — к машине не удалось подключиться; failed — задача
+    упала, и play на этой машине остановлен;
+  * skipped — задача пропущена: when, пустой loop, режим --check;
+  * rescued — задачу спас блок rescue; ignored — ошибку проигнорировал ignore_errors.
+ОБРАБОТЧИКИ В ОТЧЁТЕ. Обработчик — такая же задача play: четыре
+задачи плюс обработчик дают ok=5, и он виден и в ok, и в changed.
+Второй прогон его не выполняет: notify идёт от изменившей задачи.
+
+=========================================================================
+5. ПЕРЕМЕННЫЕ
+=========================================================================
+
+Где определяют переменные: vars в play, vars_files,
+group_vars/all.yml, group_vars/<группа>.yml, host_vars/<машина>.yml,
+include_vars, set_fact, register, -e и --extra-vars (например
+-e @extra_vars.yml).
+ПОРЯДОК ПРИОРИТЕТА от самого слабого к самому сильному:
+  * defaults роли; переменные инвентаря и group_vars/all.yml;
+  * group_vars/<группа>.yml; host_vars/<машина>.yml;
+  * факты о машине и кэшированные set_fact;
+  * vars в play; vars_prompt; vars_files; vars роли;
+  * vars на блоке задач и на задаче; include_vars;
+  * set_fact и register; параметры роли; --extra-vars (сильнее всех).
+Правило: чем ближе переменная к задаче и чем позже появилась, тем сильнее.
+  ansible web1 -m ansible.builtin.debug -a "var=web_package"
+  - name: Показать значения переменных
+    ansible.builtin.debug:
+      msg:
+        - "машина: {{ inventory_hostname }}"
+        - "web_port: {{ web_port }}"
+  - name: Проверить, что семейство ОС поддерживается ролью
+    ansible.builtin.assert:
+      that:
+        - ansible_os_family in web_admin_supported_families
+      fail_msg: "Семейство {{ ansible_os_family }} не поддержано"
+      quiet: true
+
+=========================================================================
+6. ШАБЛОНЫ И ФАКТЫ
+=========================================================================
+
+  - name: Разложить главную страницу из шаблона
+    ansible.builtin.template:
+      src: index.j2
+      dest: "{{ web_admin_site_root }}/{{ web_admin_index_file }}"
+      owner: root
+      mode: "0644"
+      backup: true
+      validate: "nginx -t"
+      trim_blocks: true
+      lstrip_blocks: true
+  * src ищется в каталоге templates рядом с плейбуком или ролью;
+  * mode пишется строкой в кавычках: "0644", "0755";
+  * backup: true оставляет копию прежнего файла с отметкой времени;
+  * validate — проверка над временным файлом до подмены, место обозначается %s: sshd -t -f %s, visudo -cf %s; у nginx без %s;
+  * trim_blocks убирает перевод строки после {% %}, lstrip_blocks —
+    пробелы перед блоком в начале строки.
+ФАКТЫ собирает модуль setup:
+  ansible all -m ansible.builtin.setup
+  ansible all -m ansible.builtin.setup -a "filter=ansible_os_family*"
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_default_ipv4"
+  ansible all -m ansible.builtin.setup -a "gather_subset=!all,!min,local"
+filter — что ПОКАЗАТЬ из уже собранного (работу не ускоряет),
+gather_subset — что СОБИРАТЬ; знак ! значит «не собирать»; наборы:
+distribution, network, hardware, virtual, local, processor, mounts.
+Факты курса: os_family (Debian или RedHat), distribution,
+distribution_version, hostname, processor_vcpus, memtotal_mb,
+default_ipv4.address; запись: ansible_facts['os_family'] или короткая.
+НАСТРАИВАЕМЫЕ ФАКТЫ — файлы INI или JSON в /etc/ansible/facts.d:
+  {{ ansible_local.site.general.owner }}
+  {{ ansible_local.hardware.cpu_cores }}
+Набор фактов собирается в начале play: файл факта кладут первым play.
+Волшебные переменные: inventory_hostname, ansible_play_hosts, hostvars,
+groups, group_names, ansible_check_mode.
+
+=========================================================================
+7. VAULT
+=========================================================================
+
+  ansible-vault create secrets_demo.yml
+  ansible-vault view group_vars/all/vault.yml
+  ansible-vault edit group_vars/all/vault.yml
+  ansible-vault encrypt group_vars/all/vault.yml
+  ansible-vault decrypt group_vars/all/vault.yml
+  ansible-vault rekey group_vars/all/vault.yml
+  ansible-vault encrypt_string --name vault_demo_token 'MyStrongPassword'
+Файл начинается строкой $ANSIBLE_VAULT;1.1;AES256; семь действий —
+create, decrypt, edit, encrypt, encrypt_string, rekey, view — печатает
+ansible-vault --help.
+Пароль передают тремя способами:
+  ansible-playbook 02_register.yml --ask-vault-pass
+  ansible-vault view group_vars/all/vault.yml --vault-password-file ~/.vault_pass
+  # ansible.cfg, секция [defaults]
+  vault_password_file = /home/engineer/.vault_pass
+  ansible-config dump --only-changed | grep -i vault
+ВАЖНО: файл с паролем (~/.vault_pass, права 600) в репозиторий не
+попадает и рядом с зашифрованным файлом не лежит. Имя переменной пишут
+с префиксом vault_: vault_db_password, а обычная переменная ссылается
+на неё через {{ vault_db_password }}.
+
+=========================================================================
+8. РОЛИ И GALAXY
+=========================================================================
+
+Структура роли, которую создаёт ansible-galaxy role init:
+  roles/web_admin/
+    defaults/main.yml    значения, которые предполагается менять
+    vars/main.yml        значения, которые роль фиксирует
+    tasks/, handlers/, meta/, templates/, files/, README.md
+defaults слабее group_vars и host_vars, vars — сильнее их; секреты
+в vars не хранят. Каталог tests удаляют: его место заняла molecule.
+  ansible-galaxy role init roles/web_admin
+  ansible-galaxy role init --role-skeleton=./skeleton my_role
+  ansible-galaxy install -r requirements.yml
+  ansible-galaxy role list
+  ansible-galaxy collection install -r requirements.yml
+  ansible-galaxy collection install ansible.posix community.general
+  ansible-galaxy collection install 'community.general:>=8.0.0,<12.0.0'
+  ansible-galaxy collection install community.general --force
+  ansible-galaxy collection verify community.general
+  # ansible.cfg, секция [defaults]
+  roles_path = ./roles
+  collections_path = ./collections:~/.ansible/collections:/usr/share/ansible/collections
+  ansible-config dump | grep -i roles_path
+
+=========================================================================
+9. ХРАНИЛИЩЕ: ДИСКИ, LVM, МОНТИРОВАНИЕ
+=========================================================================
+
+Практика 13: на web1, web2 и db1 — второй диск /dev/sdb (10 ГБ),
+раздел, группа томов data, логический том webdata, файловая система
+(ext4 на Ubuntu, xfs на Rocky) и точка монтирования /srv/data.
+  community.general.parted      device, number, label: gpt, name, flags: [lvm]
+  community.general.lvg         vg: data, pvs: [/dev/sdb1]
+  community.general.lvol        vg, lv, size, shrink: false, state: present
+  community.general.filesystem  fstype, dev: /dev/mapper/data-webdata
+  ansible.posix.mount           path, src, fstype, opts, dump, passno
+Расширение тома и файловой системы без размонтирования — тот же lvol
+с resizefs: true: ext4 растёт через resize2fs, xfs — через xfs_growfs
+и только смонтированным. Порядок: место, раздел, pvresize, lvextend.
+  ansible all -b -m ansible.builtin.command -a "lsblk -o NAME,SIZE,TYPE,FSTYPE /dev/sdb"
+  ansible all -b -m ansible.builtin.command -a "parted /dev/sdb unit MiB print"
+  ansible all -b -m ansible.builtin.command -a "vgs"
+  ansible web1 -b -m ansible.builtin.command -a "blkid /dev/mapper/data-webdata"
+  ansible all -b -m ansible.builtin.command -a "findmnt /srv/data"
+  ansible all -b -m ansible.builtin.command -a "findmnt --verify"
+  ansible all -b -m ansible.builtin.command -a "df -h /srv/data"
+ВАЖНО: разметку запускают только на учебном стенде и только со вторым
+диском. force: true у filesystem означает mkfs на каждом прогоне:
+данные пропадут, а changed=0 не наступит. fstab проверяют до
+перезагрузки: сначала mount -a, затем findmnt --verify.
+
+=========================================================================
+10. КАЧЕСТВО: LINT, MOLECULE, ИНВЕНТАРЬ
+=========================================================================
+
+  ansible-lint
+  ansible-lint draft_lint.yml
+Линтер ищет файл .ansible-lint в текущем каталоге и выше, поэтому
+запускать его нужно из корня проекта. exclude_paths — файлы не
+открываются, skip_list — правило выключено, warn_list — нарушение
+видно, но прогон не валится. command-instead-of-module
+и no-changed-when выключать нельзя: они ловят потерю идемпотентности.
+MOLECULE: сценарий — каталог molecule/default с файлами molecule.yml,
+converge.yml, prepare.yml, verify.yml.
+  molecule create
+  molecule converge
+  molecule idempotence
+  molecule verify
+  molecule destroy
+  molecule test
+Драйвер delegated ничего не создаёт: в стенде нет Docker, роль
+проверяется на настоящих web1 и web2 (managed: false). idempotence
+применяет converge.yml второй раз и проверяет changed=0.
+ВНЕШНИЙ ИНВЕНТАРЬ (практика 16): скрипт inventory/stand.py печатает
+JSON; ключ _meta.hostvars хранит переменные хостов для Ansible.
+  chmod +x inventory/stand.py
+  python3 inventory/stand.py --list | python3 -m json.tool
+  ansible-inventory -i inventory/stand.py --graph
+  ansible-inventory -i inventory/stand.py --host web1
+  # ansible.cfg, секция [inventory]
+  enable_plugins = ansible.builtin.host_list, ansible.builtin.script, ansible.builtin.auto, ansible.builtin.yaml, ansible.builtin.ini
+  cache = true
+  cache_plugin = ansible.builtin.jsonfile
+  cache_timeout = 3600
+  cache_connection = .cache/ansible_inventory
+
+=========================================================================
+11. СВОДНАЯ ТАБЛИЦА МОДУЛЕЙ КУРСА
+=========================================================================
+
+  -------------------------------------------------------------------
+  ansible.builtin.ping              — проверить подключение (1, 3, 4)
+  ansible.builtin.command           — программа без оболочки (3, 8, 12, 13)
+  ansible.builtin.shell             — команда через /bin/sh -c (3, 4, 8, 12, 16)
+  ansible.builtin.copy              — положить готовый файл (3, 4, 8, 10, 12)
+  ansible.builtin.file              — каталог, права, отсутствие (3, 7, 8, 10, 12)
+  ansible.builtin.template          — разложить шаблон Jinja2 (6, 8, 10, 12)
+  ansible.builtin.lineinfile, ansible.builtin.blockinfile, ansible.builtin.replace — правка текста (8, 11)
+  ansible.builtin.archive, ansible.builtin.unarchive — архив и распаковка (8)
+  ansible.builtin.fetch             — забрать файл на control (8)
+  ansible.builtin.find              — найти файлы по условию (8, 11)
+  ansible.builtin.stat              — узнать состояние пути (6, 8, 11, 13, 16)
+  ansible.builtin.get_url           — скачать файл по URL (3)
+  ansible.builtin.user, ansible.builtin.group — пользователь и группа (9)
+  ansible.posix.authorized_key      — разложить открытый ключ (9)
+  ansible.builtin.apt, ansible.builtin.dnf — пакеты Debian и Rocky (3, 4, 7, 8, 9)
+  ansible.builtin.package           — пакет по семейству ОС (7, 9, 10, 14)
+  ansible.builtin.deb822_repository, ansible.builtin.yum_repository — репозитории (9)
+  ansible.builtin.systemd_service, ansible.builtin.service — служба (3, 4, 7, 9, 10, 12, 16)
+  ansible.builtin.service_facts     — факты о службах (16)
+  ansible.builtin.cron, community.general.timezone — задания и время (9)
+  ansible.posix.sysctl              — параметр ядра (9)
+  community.general.ufw, ansible.posix.firewalld — межсетевой экран (9, 10, 15)
+  ansible.builtin.reboot, ansible.builtin.wait_for_connection — перезагрузка узла (9)
+  community.general.parted          — таблица разделов (13)
+  community.general.lvg, community.general.lvol — LVM: группа томов и том (13)
+  community.general.filesystem      — файловая система на томе (13)
+  ansible.posix.mount               — монтирование и fstab (13)
+  ansible.builtin.assert            — проверить условие и остановиться (6, 7, 10, 12, 13)
+  ansible.builtin.debug             — напечатать значение (3, 5, 6, 7, 12, 13)
+  ansible.builtin.set_fact          — посчитать значение в прогоне (5, 6, 7, 10, 12)
+  ansible.builtin.include_vars      — прочитать переменные из файла (7, 9, 13)
+  ansible.builtin.setup             — собрать факты (3, 6, 9, 14)
+  ansible.builtin.slurp             — прочитать файл с узла (12)
+  ansible.builtin.uri               — HTTP-запрос к узлу (10, 14, 16)
+  ansible.builtin.include_role, ansible.builtin.include_tasks — включить динамически (10, 14)
+  ansible.builtin.import_tasks, ansible.builtin.import_playbook — включить статически (14)
+  ansible.builtin.add_host          — добавить машину в инвентарь (14)
+  ansible.builtin.meta              — end_play и end_host (14)
+  ansible.windows.win_ping          — проверка Windows-узла (2, приложение 3)
+
+=========================================================================
+12. ЧТО СМОТРЕТЬ ПРИ ОШИБКЕ
+=========================================================================
+
+Смотрим в таком порядке:
+  * PLAY RECAP целиком: какая колонка ненулевая;
+  * строка TASK выше отчёта: задача и машина, на которой она упала;
+  * ansible-playbook --syntax-check: ошибка разбора YAML до запуска;
+  * ansible-playbook -vvv и --limit: параметры задачи, подставленные
+    значения и обмен по SSH;
+  * ansible all -m ansible.builtin.ping: доступность узла и Python;
+  * ansible-inventory --graph и --host: тот ли инвентарь и переменные;
+  * ansible-config dump --only-changed: прочитан ли ansible.cfg;
+  * ansible-doc <модуль>: параметры именно вашей версии.
+Разбор частых ошибок — причина и порядок проверки — в приложении
+app_2_troubleshooting.txt.

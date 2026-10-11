@@ -1,0 +1,7 @@
+---
+# Переменные для машин семейства RedHat (Rocky Linux: db1).
+
+ssh_service: sshd
+web_package: httpd
+web_service: httpd
+firewall_package: firewalld

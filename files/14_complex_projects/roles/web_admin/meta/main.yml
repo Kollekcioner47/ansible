@@ -1,0 +1,34 @@
+---
+# meta/main.yml — описание роли. Читают его двое: ansible-galaxy
+# (когда роль публикуют или устанавливают) и сам Ansible (когда
+# роль вызывают — ради раздела dependencies).
+
+galaxy_info:
+  role_name: web_admin
+  author: engineer
+  description: Веб-сервер и учебная страница сайта на Ubuntu и Rocky Linux
+  company: учебный стенд курса Ansible
+  license: MIT
+  min_ansible_version: "2.19"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: EL
+      versions:
+        - all
+
+  galaxy_tags:
+    - web
+    - apache
+
+# Зависимости роли: список ролей, которые Ansible выполнит перед
+# этой. Пустой список — у web_admin зависимостей нет. Если
+# зависимость понадобится, запись выглядит так:
+#
+#   dependencies:
+#     - role: common
+#       vars:
+#         common_timezone: Europe/Moscow
+dependencies: []

@@ -1,0 +1,85 @@
+# 03_blocks.yml — шаг 4 практики 7: block, rescue и always.
+# Первый play — по блоку на семейство: один when на блок.
+# Второй play падает намеренно: так видно, что делает rescue.
+
+---
+- name: Веб-сервер на двух семействах двумя блоками
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Ветка Ubuntu — установить и запустить apache2
+      block:
+        - name: Установить пакет apache2
+          ansible.builtin.apt:
+            name: apache2
+            state: present
+
+        - name: Запустить и включить службу apache2
+          ansible.builtin.service:
+            name: apache2
+            state: started
+            enabled: true
+
+      rescue:
+        - name: Снять пакет apache2 как откат
+          ansible.builtin.apt:
+            name: apache2
+            state: absent
+
+      when: ansible_os_family == "Debian"
+
+    - name: Ветка Rocky Linux — установить и запустить httpd
+      block:
+        - name: Установить пакет httpd
+          ansible.builtin.dnf:
+            name: httpd
+            state: present
+
+        - name: Запустить и включить службу httpd
+          ansible.builtin.service:
+            name: httpd
+            state: started
+            enabled: true
+
+      rescue:
+        - name: Снять пакет httpd как откат
+          ansible.builtin.dnf:
+            name: httpd
+            state: absent
+
+      when: ansible_os_family == "RedHat"
+
+- name: Опыт с откатом — задача падает, rescue откатывает, always подводит итог
+  hosts: web:db
+  become: true
+  gather_facts: true
+
+  vars:
+    # Пакета с таким именем нет ни в Ubuntu, ни в Rocky Linux:
+    # он нужен только для того, чтобы блок честно упал.
+    lab_absent_package: lab-extra-package
+
+  tasks:
+    - name: Опыт с откатом
+      block:
+        - name: Установить пакет, которого нет в репозиториях
+          ansible.builtin.package:
+            name: "{{ lab_absent_package }}"
+            state: present
+
+      rescue:
+        - name: Объяснить, что произошло
+          ansible.builtin.debug:
+            msg: "Пакет {{ lab_absent_package }} не установился, откатываем опыт"
+
+        - name: Снять пакет, если он всё-таки успел встать
+          ansible.builtin.package:
+            name: "{{ lab_absent_package }}"
+            state: absent
+
+      always:
+        - name: Записать итог опыта
+          ansible.builtin.debug:
+            msg: "Опыт на {{ inventory_hostname }} завершён, плейбук идёт дальше"
