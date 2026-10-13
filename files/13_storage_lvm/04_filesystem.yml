@@ -13,7 +13,7 @@
   pre_tasks:
     - name: "Прочитать переменные для семейства ОС"
       ansible.builtin.include_vars:
-        file: "vars/{{ ansible_os_family }}.yml"
+        file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
   tasks:
     - name: "Поставить инструменты создания файловых систем"
