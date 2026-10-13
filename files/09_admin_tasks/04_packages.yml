@@ -10,19 +10,19 @@
   pre_tasks:
     - name: Прочитать переменные для семейства ОС
       ansible.builtin.include_vars:
-        file: "vars/{{ ansible_os_family }}.yml"
+        file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
   tasks:
     - name: Обновить кэш пакетов, если он старше часа (Debian)
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Убрать пакеты, ставшие ненужными (Debian)
       ansible.builtin.apt:
         autoremove: true
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Установить пакеты по одному (Debian)
       ansible.builtin.apt:
@@ -31,7 +31,7 @@
       loop: "{{ admin_packages }}"
       loop_control:
         label: "{{ item }}"
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Установить пакеты по одному (RedHat)
       ansible.builtin.dnf:
@@ -40,20 +40,20 @@
       loop: "{{ admin_packages }}"
       loop_control:
         label: "{{ item }}"
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
 
     - name: Подключить репозиторий с исходниками Ubuntu (Debian)
       ansible.builtin.deb822_repository:
         name: ubuntu-sources
         types: deb-src
         uris: http://archive.ubuntu.com/ubuntu
-        suites: "{{ ansible_distribution_release }}"
+        suites: "{{ ansible_facts['distribution_release'] }}"
         components:
           - main
           - universe
         signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
         state: present
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
       notify: Обновить кэш apt
 
     - name: Подключить репозиторий EPEL (RedHat)
@@ -65,10 +65,10 @@
         gpgkey: https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-$releasever
         enabled: true
         state: present
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
 
   handlers:
     - name: Обновить кэш apt
       ansible.builtin.apt:
         update_cache: true
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"

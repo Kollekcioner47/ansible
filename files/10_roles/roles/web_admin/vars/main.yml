@@ -9,7 +9,7 @@ web_admin_supported_families:
   - RedHat
 
 # Настройки по семействам ОС: ключ словаря — значение факта
-# ansible_os_family, поэтому в задачах нет ветвлений.
+# ansible_facts['os_family'], поэтому в задачах нет ветвлений.
 web_admin_family_settings:
   Debian:
     package: apache2
