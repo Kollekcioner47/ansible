@@ -132,25 +132,25 @@ when в задаче, блоком с одним when на группу зада
     tasks:
       - name: Показать семейство ОС и дистрибутив узла
         ansible.builtin.debug:
-          msg: "{{ ansible_os_family }} / {{ ansible_distribution }}"
+          msg: "{{ ansible_facts['os_family'] }} / {{ ansible_facts['distribution'] }}"
 
       - name: Условие по факту с отрицанием
         ansible.builtin.debug:
           msg: "Это не Ubuntu: пакет веб-сервера называется httpd"
-        when: ansible_os_family != "Debian"
+        when: ansible_facts['os_family'] != "Debian"
 
       - name: Условие по списку и по группе инвентаря
         ansible.builtin.debug:
           msg: "{{ inventory_hostname }} поддержан и не входит в группу db"
         when:
-          - ansible_os_family in allowed_families
+          - ansible_facts['os_family'] in allowed_families
           - inventory_hostname not in groups['db']
 
       - name: Условие со скобками и по переменной
         ansible.builtin.debug:
           msg: "Семейство поддержано, порт равен {{ web_port }}"
         when: >
-          (ansible_os_family == "Debian" or ansible_os_family == "RedHat")
+          (ansible_facts['os_family'] == "Debian" or ansible_facts['os_family'] == "RedHat")
           and web_port == 80
 
       - name: Условие по необъявленной переменной
@@ -201,8 +201,8 @@ when в задаче, блоком с одним when на группу зада
 
 ОПЕРАТОРЫ, КОТОРЫЕ ВСТРЕЧАЮТСЯ ЧАЩЕ ВСЕГО:
 
-  == и !=        сравнение:      ansible_os_family == "Debian"
-  in и not in    вхождение:      ansible_os_family in allowed_families
+  == и !=        сравнение:      ansible_facts['os_family'] == "Debian"
+  in и not in    вхождение:      ansible_facts['os_family'] in allowed_families
   is defined     объявлена:      web_port is defined
   is not defined не объявлена:   ssl_certificate_path is not defined
   and, or, not   логика:         скобки ( ) задают порядок
@@ -212,7 +212,7 @@ when в задаче, блоком с одним when на группу зада
 переменные сам. Если написать их по привычке, получится не то, что
 задумано:
 
-  when: "{{ ansible_os_family == 'Debian' }}"
+  when: "{{ ansible_facts['os_family'] == 'Debian' }}"
 
 В ansible-core 2.19 такая запись даёт предупреждение:
 
@@ -220,7 +220,7 @@ when в задаче, блоком с одним when на группу зада
 
 А если скобки стоят внутри выражения, разбор шаблона падает:
 
-  when: "{{ ansible_os_family }} == 'Debian'"
+  when: "{{ ansible_facts['os_family'] }} == 'Debian'"
 
   Syntax error in expression. Template delimiters are not supported in expressions: chunk after expression
 
@@ -265,27 +265,27 @@ when. Файл 02_two_families.yml:
         ansible.builtin.apt:
           name: apache2
           state: present
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Установить httpd на Rocky Linux
         ansible.builtin.dnf:
           name: httpd
           state: present
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
       - name: Запустить и включить apache2 на Ubuntu
         ansible.builtin.service:
           name: apache2
           state: started
           enabled: true
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Запустить и включить httpd на Rocky Linux
         ansible.builtin.service:
           name: httpd
           state: started
           enabled: true
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
 Здесь и дальше используется ansible.builtin.service — тот же модуль,
 что и в практике 4: он сам определяет, чем управлять службой.
@@ -376,7 +376,7 @@ when. Файл 02_two_families.yml:
               name: apache2
               state: absent
 
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Ветка Rocky Linux — установить и запустить httpd
         block:
@@ -397,7 +397,7 @@ when. Файл 02_two_families.yml:
               name: httpd
               state: absent
 
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
   - name: Опыт с откатом — задача падает, rescue откатывает, always подводит итог
     hosts: web:db
@@ -531,7 +531,7 @@ when. Файл 02_two_families.yml:
 
   - name: Подключить переменные семейства ОС
     ansible.builtin.include_vars:
-      file: "vars/{{ ansible_os_family }}.yml"
+      file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
 ПОЧЕМУ ИМЕННО ТАК: имя файла собирается из факта, поэтому для Debian
 читается vars/Debian.yml, а для RedHat — vars/RedHat.yml. Модуль
@@ -587,7 +587,7 @@ failed_when МЕНЯЕТ ПРИЗНАК ОТКАЗА: так задаче гов
     register: httpd_check
     changed_when: false
     failed_when: false
-    when: ansible_os_family == "RedHat"
+    when: ansible_facts['os_family'] == "RedHat"
 
 ignore_errors ПРОСТО ПРОДОЛЖАЕТ РАБОТУ: задача падает, в выводе
 появляется fatal и строка ...ignoring, машина не выбывает из play.
@@ -751,7 +751,7 @@ pause ДЕЛАЕТ ПАУЗУ МЕЖДУ ИТЕРАЦИЯМИ. В учебном
     tasks:
       - name: Подключить переменные семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
       - name: Запустить и включить веб-сервер
         ansible.builtin.service:
@@ -872,7 +872,7 @@ case — это время, которое узел и один fork будут 
     tasks:
       - name: Подключить переменные семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
         tags: always
 
       - name: Установить веб-сервер
@@ -1028,7 +1028,7 @@ service. Тег always означает «выполнять всегда» и �
 
 ПРОБЛЕМА: conditional statements should not include jinja2 templating delimiters
 
-  [WARNING]: conditional statements should not include jinja2 templating delimiters such as {{ }} or {% %}. Found: {{ ansible_os_family }} == "Debian"
+  [WARNING]: conditional statements should not include jinja2 templating delimiters such as {{ }} or {% %}. Found: {{ ansible_facts['os_family'] }} == "Debian"
 
 Так отвечали версии ansible-core до 2.19. В 2.19 та же ошибка выглядит
 иначе: если всё значение обёрнуто в {{ }}, будет предупреждение
@@ -1038,7 +1038,7 @@ in expression. Причина одна: when — это выражение, а �
 Проверяйте по порядку:
 
   1. Найдите строку с when и уберите из неё {{ }}:
-     when: ansible_os_family == "Debian"
+     when: ansible_facts['os_family'] == "Debian"
   2. Поищите остальные случаи: grep -n "when:.*{{" *.yml
   3. Запустите --syntax-check: ошибка в условии видна только
      при выполнении, синтаксис YAML при этом верный.
@@ -1117,7 +1117,7 @@ notify ссылается на обработчик, которого нет. An
      ansible.builtin.setup -a "filter=ansible_os_family". Проверьте
      и написание: Debian и debian — разные строки.
   2. Посмотрите, собираются ли факты. При gather_facts: false факта
-     ansible_os_family нет, и условие по нему всегда ложно. Это
+     ansible_facts['os_family'] нет, и условие по нему всегда ложно. Это
      самая частая причина.
   3. Запустите с -vvv и найдите строку с вычисленным условием:
      в ней видно, какие значения получились.

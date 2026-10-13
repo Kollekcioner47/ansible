@@ -432,7 +432,7 @@ STATE: ABSENT. При удалении строки параметр line не �
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Два решения здесь требуют объяснения. force: false у задачи copy —
@@ -585,7 +585,7 @@ backrefs: true меняет поведение модуля в двух мест
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Запуск: задача с совпадением даёт changed, задача с промахом — ok,
@@ -935,7 +935,7 @@ Ansible не пишет изменённый текст сразу на мест
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Запуск. Первая задача падает нарочно, и текст этой ошибки разобран

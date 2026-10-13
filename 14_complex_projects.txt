@@ -102,6 +102,10 @@ group_vars/, tasks/ и roles/ — и разберём, почему «всё в 
   callback_result_format = yaml
   forks = 10
   roles_path = ./roles
+  # Автоинъекция фактов: короткие имена вида ansible_os_family объявлены
+  # устаревшими и удаляются в ansible-core 2.24, поэтому она выключена.
+  # Факты доступны только через словарь: ansible_facts['os_family'].
+  inject_facts_as_vars = false
 
 ПОЧЕМУ ИМЕННО ТАК: инвентаря по умолчанию нет, потому что у проекта
 два равноправных окружения: забытый ключ -i молча настроил бы dev там,
@@ -1024,7 +1028,7 @@ playbooks/webservers.yml это playbooks/roles, где роли нет. Пор�
 Причина: задача каждый раз создаёт разное содержимое. Чаще всего
 виновата дата в шаблоне:
 
-  collected_at: "{{ ansible_date_time.iso8601 }}"
+  collected_at: "{{ ansible_facts['date_time']['iso8601'] }}"
 
   grep -rn 'date_time\|now()' tasks/ playbooks/ roles/
 

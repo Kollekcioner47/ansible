@@ -222,8 +222,11 @@ Kerberos: пароль вообще не нужен. Если домена не�
 ЧАСТЬ МОДУЛЕЙ ПЕРЕЕХАЛА в другие коллекции: `chocolatey.chocolatey`
 (пакеты Chocolatey), `microsoft.ad` (объекты Active Directory).
 Если модуль не находится, смотрите не только в `ansible.windows`:
-`ansible-doc -l` покажет, что установлено, а имя коллекции входит
-в полное имя модуля.
+что установлено, покажет `ansible-galaxy collection list`, а справка
+по конкретному модулю приходит всегда: `ansible-doc
+ansible.windows.win_ping`. Полный список `ansible-doc -l` в части
+сборок ansible-core падает — это известная ошибка самого Ansible
+(разбор — практика 1, шаг 9).
 
 Обратите внимание: `win_command` и `win_shell` — тоже «последнее
 средство». Если задача ставит пакет, есть `win_package`; если
@@ -260,12 +263,12 @@ Kerberos: пароль вообще не нужен. Если домена не�
 5. СЛУЖБЫ — `win_service` вместо `systemd`. Имена служб —
    человекочитаемые (`'W32Time'`, `'Spooler'`), а не имена юнитов.
 
-6. ФАКТЫ — другие. Вместо `ansible_os_family` и `ansible_distribution`
-   приходят `ansible_os_family: Windows`, `ansible_os_name`,
-   `ansible_distribution_version`, `ansible_architecture`
+6. ФАКТЫ — другие. Вместо `ansible_facts['os_family']` и `ansible_facts['distribution']`
+   приходят `ansible_facts['os_family']: Windows`, `ansible_os_name`,
+   `ansible_facts['distribution_version']`, `ansible_facts['architecture']`
    и набор `ansible_windows_*`. Плейбук, написанный для Linux,
    на Windows-хосте упадёт на первой же задаче — и это ожидаемо:
-   условия `when: ansible_os_family == "Windows"` пишутся прямо
+   условия `when: ansible_facts['os_family'] == "Windows"` пишутся прямо
    в задачах или выносятся в отдельный плейбук.
 
 ЗАЧЕМ ЭТО В РАБОТЕ: смешанный парк — обычное дело, и умение

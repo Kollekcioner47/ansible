@@ -69,12 +69,12 @@ files/07_conditions_loops/02_two_families.yml):
       - name: Установить apache2 на Ubuntu
         ansible.builtin.apt:
           name: apache2
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Установить httpd на Rocky Linux
         ansible.builtin.dnf:
           name: httpd
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
       ...и ещё шесть задач: страница, служба, межсетевой экран.
 
@@ -230,24 +230,24 @@ templates/, tests/ и vars/ — каталоги с файлами-заглуш�
   # Задачи роли web_admin: веб-сервер и учебная страница сайта.
   # Порядок повторяет плейбук практики 7: пакет, страница, служба,
   # межсетевой экран. Имена пакетов, служб и межсетевых экранов
-  # берутся из vars/main.yml по факту ansible_os_family.
+  # берутся из vars/main.yml по факту ansible_facts['os_family'].
 
   - name: Проверить, что семейство ОС поддерживается ролью
     ansible.builtin.assert:
       that:
-        - ansible_os_family in web_admin_supported_families
+        - ansible_facts['os_family'] in web_admin_supported_families
       fail_msg: >-
         Роль web_admin не умеет работать на семействе
-        {{ ansible_os_family }}: поддержаны
+        {{ ansible_facts['os_family'] }}: поддержаны
         {{ web_admin_supported_families | join(', ') }}.
-      success_msg: "Семейство {{ ansible_os_family }} поддержано"
+      success_msg: "Семейство {{ ansible_facts['os_family'] }} поддержано"
       quiet: true
 
   - name: Взять имена пакетов и служб своего семейства ОС
     ansible.builtin.set_fact:
-      web_admin_package: "{{ web_admin_family_settings[ansible_os_family].package }}"
-      web_admin_service: "{{ web_admin_family_settings[ansible_os_family].service }}"
-      web_admin_firewall_package: "{{ web_admin_family_settings[ansible_os_family].firewall_package }}"
+      web_admin_package: "{{ web_admin_family_settings[ansible_facts['os_family']].package }}"
+      web_admin_service: "{{ web_admin_family_settings[ansible_facts['os_family']].service }}"
+      web_admin_firewall_package: "{{ web_admin_family_settings[ansible_facts['os_family']].firewall_package }}"
 
   - name: Установить веб-сервер
     ansible.builtin.package:
@@ -313,7 +313,7 @@ templates/, tests/ и vars/ — каталоги с файлами-заглуш�
           policy: deny
           direction: incoming
 
-    when: ansible_os_family == "Debian"
+    when: ansible_facts['os_family'] == "Debian"
 
   - name: Открыть порт сайта на Rocky Linux
     block:
@@ -330,12 +330,12 @@ templates/, tests/ и vars/ — каталоги с файлами-заглуш�
           immediate: true
           state: enabled
 
-    when: ansible_os_family == "RedHat"
+    when: ansible_facts['os_family'] == "RedHat"
 
 Что изменилось по сравнению с плейбуком практики 7:
 
   * имена пакетов и служб ушли в vars/main.yml и собираются
-    задачей set_fact по факту ansible_os_family: в роли нет
+    задачей set_fact по факту ansible_facts['os_family']: в роли нет
     ни одного when по семейству ОС;
   * страница кладётся модулем template, а не copy: на каждой
     машине она своя;
@@ -457,7 +457,7 @@ roles/web_admin/templates/index.j2:
     - RedHat
 
   # Настройки по семействам ОС: ключ словаря — значение факта
-  # ansible_os_family, поэтому в задачах нет ветвлений.
+  # ansible_facts['os_family'], поэтому в задачах нет ветвлений.
   web_admin_family_settings:
     Debian:
       package: apache2
@@ -548,7 +548,7 @@ ansible.builtin.meta: flush_handlers.
 
   roles:
     - role: web_admin
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
 СПОСОБ 4. ansible.builtin.include_role — вызов из задач:
 
@@ -618,7 +618,7 @@ ansible.builtin.meta: flush_handlers.
   и оформление `style.css`, открывает порт в `ufw` или `firewalld`,
   перезапускает службу обработчиком только при изменении шаблона.
   Условий по имени машины нет: ветка выбирается по факту
-  `ansible_os_family`. Нужны коллекции `ansible.posix` и
+  `ansible_facts['os_family']`. Нужны коллекции `ansible.posix` и
   `community.general`, факты узла и права `root`.
 
   Переопределяемые значения — в `defaults/main.yml`
@@ -689,6 +689,10 @@ ansible.builtin.meta: flush_handlers.
   stdout_callback = default
   callback_result_format = yaml
   forks = 10
+  # Автоинъекция фактов: короткие имена вида ansible_os_family объявлены
+  # устаревшими и удаляются в ansible-core 2.24, поэтому она выключена.
+  # Факты доступны только через словарь: ansible_facts['os_family'].
+  inject_facts_as_vars = false
 
 Переменные всего проекта — group_vars/all.yml:
 
@@ -730,7 +734,7 @@ ansible.builtin.meta: flush_handlers.
   ---
   # site.yml — точка входа учебного проекта практики 10.
   # Один play на группу linux: роль сама выбирает ветку
-  # по факту ansible_os_family, а не по имени машины.
+  # по факту ansible_facts['os_family'], а не по имени машины.
   #
   # Запуск из каталога проекта:
   #   cd ~/ansible-lab/10_roles
@@ -1019,7 +1023,7 @@ changed=2 — это сама задача шаблона и обработчи�
 от прогона к прогону даёт разный текст. Почти всегда причина —
 дата и время в шаблоне:
 
-  <p>Страница собрана: {{ ansible_date_time.iso8601 }}</p>
+  <p>Страница собрана: {{ ansible_facts['date_time']['iso8601'] }}</p>
 
 Значение факта меняется каждую секунду, значит меняется и файл
 на узле. Проверяйте по порядку: сначала поищите в шаблоне

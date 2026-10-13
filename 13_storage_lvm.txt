@@ -196,16 +196,16 @@ LVM добавляет между разделом и файловой сист�
     - lvm2
     - xfsprogs
 
-Файл выбирается по факту ansible_os_family, значение которого — Debian
+Файл выбирается по факту ansible_facts['os_family'], значение которого — Debian
 или RedHat. Подключается он задачей include_vars в pre_tasks:
 
   pre_tasks:
     - name: "Прочитать переменные для семейства ОС"
       ansible.builtin.include_vars:
-        file: "vars/{{ ansible_os_family }}.yml"
+        file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
 ПОЧЕМУ ИМЕННО ТАК: include_vars читает файл во время прогона, когда
-факты уже собраны, поэтому «vars/{{ ansible_os_family }}.yml»
+факты уже собраны, поэтому «vars/{{ ansible_facts['os_family'] }}.yml»
 превращается в vars/Debian.yml на web1 и в vars/RedHat.yml на db1.
 Читается он в pre_tasks — до первой задачи, которой нужны переменные.
 
@@ -233,7 +233,7 @@ include_vars внутри плейбука — в ad-hoc команде их н�
       "changed": false
   }
 
-Задача include_vars выбирает файл по факту ansible_os_family:
+Задача include_vars выбирает файл по факту ansible_facts['os_family']:
 vars/Debian.yml на web1 и web2, vars/RedHat.yml на db1 — и там
 storage_fstype равен ext4 или xfs. Тот же тип получит том
 в /srv/data, и в шаге 6 его показывает blkid: TYPE="ext4"
@@ -262,7 +262,7 @@ storage_fstype равен ext4 или xfs. Тот же тип получит т�
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       - name: "Показать блочные устройства узла"
@@ -372,7 +372,7 @@ storage_fstype равен ext4 или xfs. Тот же тип получит т�
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       ... пакеты: parted, lvm2 и инструменты файловых систем ...
@@ -515,7 +515,7 @@ community.general: короткое имя parted в плейбуке не на�
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       ... пакеты: parted, lvm2 и инструменты файловых систем ...
@@ -588,7 +588,7 @@ community.general: короткое имя parted в плейбуке не на�
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       ... пакеты: parted, lvm2 и инструменты файловых систем ...
@@ -653,7 +653,7 @@ Ubuntu, xfs — файловая система по умолчанию в се�
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       - name: "Создать точку монтирования"
@@ -751,7 +751,7 @@ lsscsi, lsof, pvs и vgs: нужно точно знать, чьё это уст
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       - name: "Расширить логический том вместе с файловой системой"
@@ -814,7 +814,7 @@ lsscsi, lsof, pvs и vgs: нужно точно знать, чьё это уст
     become: true
 
     pre_tasks:
-      ... include_vars для vars/{{ ansible_os_family }}.yml ...
+      ... include_vars для vars/{{ ansible_facts['os_family'] }}.yml ...
 
     tasks:
       ... пакеты, проверки диска, assert и разметка — как в 02_parted.yml ...

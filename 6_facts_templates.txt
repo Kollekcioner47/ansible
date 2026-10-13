@@ -17,7 +17,7 @@
 и ansible.builtin.assert.
 
 Разложим настраиваемые факты в /etc/ansible/facts.d — INI и JSON —
-и прочитаем их через ansible_local: так машина получает пометку о роли,
+и прочитаем их через ansible_facts['ansible_local']: так машина получает пометку о роли,
 владельце и версии стенда.
 
 Напишем два шаблона: index.j2 — страница сайта с фактами и владельцем
@@ -27,7 +27,9 @@
 inventory_dir, ansible_check_mode), фильтры и тесты Jinja2 и познакомимся
 с validate — проверкой файла до того, как он попал на место.
 
-В конце посчитаем, во что обходится полный сбор фактов.
+В конце посчитаем, во что обходится полный сбор фактов, и выключим
+автоинъекцию фактов: проверим, что плейбуки не держатся за короткие
+имена, от которых Ansible отказывается в ansible-core 2.24.
 
 
 =========================================================================
@@ -44,7 +46,8 @@ inventory_dir, ansible_check_mode), фильтры и тесты Jinja2 и по�
 В ~/ansible-lab лежат inventory.ini, ansible.cfg, group_vars и host_vars
 из практик 2 и 5. На web1 и web2 из практики 4 работает apache2,
 на db1 веб-сервера нет: страницу развернём с ключом --limit web.
-Ansible: ansible-core 2.19 (пакет Ansible community 12.x) в ~/ansible-venv.
+Ansible: ansible-core 2.19.0 в ~/ansible-venv (примеры сняты на
+2.19.0; на 2.21 версии в выводе отличаются, поведение то же).
 
 ФАЙЛЫ ИЗ КАТАЛОГА КУРСА лежат в files/06_facts_templates:
 
@@ -101,12 +104,32 @@ Gathering Facts:
       }
   }
 
-ВСЕ ФАКТЫ ЛЕЖАТ В ОДНОМ СЛОВАРЕ ansible_facts, и обращаться к ним можно
-двумя способами: длинным ansible_facts['os_family'] и коротким
-ansible_os_family — второе имя Ansible подставляет сам, беря значение
-из того же словаря. Работают обе формы, выбор между ними — вопрос
-стиля: короткую пишем там, где она читается, а форму через словарь —
-там, где имя факта собирается из частей.
+ВСЕ ФАКТЫ ЛЕЖАТ В ОДНОМ СЛОВАРЕ ansible_facts, и ключи в нём записаны
+без префикса: os_family, hostname, distribution. Исторически Ansible
+дополнительно подставлял те же значения в общий набор переменных —
+под именами с префиксом: ansible_os_family, ansible_hostname. Эта
+подстановка объявлена устаревшей: её включает настройка
+INJECT_FACTS_AS_VARS, при каждом запуске play печатается
+предупреждение, а в ansible-core 2.24 подстановку уберут:
+
+  [DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True`
+  is deprecated, top-level facts will not be auto injected after
+  the change. This feature will be removed from ansible-core
+  version 2.24.
+  Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+Поэтому в курсе используется только форма через словарь —
+ansible_facts['os_family']. Не путайте её с выводом модуля setup:
+модуль печатает имена фактов в прежнем виде, с префиксом
+(ansible_os_family), поэтому напечатанные в практике блоки вывода
+выглядят иначе, чем обращение в плейбуке. Ключи внутри ansible_facts
+идут без префикса; исключение одно — настраиваемые факты: их ключ
+так и называется ansible_local (шаг 4).
+
+ЧЕГО НЕ ДЕЛАТЬ: не пишите короткие имена фактов в новом коде.
+Сегодня ansible_os_family в плейбуке — это предупреждение при каждом
+запуске, а в ansible-core 2.24 — ошибка: такой переменной не будет.
+Убирается это одной настройкой ansible.cfg, и ей посвящён шаг 13.
 
 ФАКТЫ, НА КОТОРЫЕ ОПИРАЕТСЯ КУРС:
 
@@ -240,13 +263,13 @@ var — значение переменной со всеми типами. ansi
             - "Память, МБ: {{ ansible_facts['memtotal_mb'] }}"
             - "Основной адрес: {{ ansible_facts['default_ipv4']['address'] }}"
 
-      - name: Показать те же значения короткими именами
+      - name: Показать те же значения одной строкой
         ansible.builtin.debug:
           msg: >-
-            {{ ansible_hostname }}: {{ ansible_os_family }},
-            {{ ansible_distribution }} {{ ansible_distribution_version }},
-            {{ ansible_processor_vcpus }} ядра, {{ ansible_memtotal_mb }} МБ,
-            {{ ansible_default_ipv4.address }}
+            {{ ansible_facts['hostname'] }}: {{ ansible_facts['os_family'] }},
+            {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }},
+            {{ ansible_facts['processor_vcpus'] }} ядра, {{ ansible_facts['memtotal_mb'] }} МБ,
+            {{ ansible_facts['default_ipv4']['address'] }}
 
   - name: Проверить предположения о машине
     hosts: linux
@@ -329,7 +352,7 @@ site.fact, формат INI:
 
   # Настраиваемый факт стенда курса. Формат INI.
   # Лежит на узле в /etc/ansible/facts.d/ и читается модулем setup.
-  # Доступ к значениям: ansible_local.site.general.<ключ>
+  # Доступ к значениям: ansible_facts['ansible_local']['site']['general']['<ключ>']
   # (имя файла, затем имя секции, затем имя ключа).
 
   [general]
@@ -349,9 +372,11 @@ hardware.fact, формат JSON:
 
 ЗАЧЕМ ЭТО В РАБОТЕ: имя файла становится именем факта, имя секции —
 вложенным ключом, имя ключа — значением. Машина получает пометку так,
-как удобно организации: ansible_local.site.general даёт владельца, роль
-и версию стенда, ansible_local.hardware — модель и ресурсы. Дальше это
-обычные переменные: в шаблоне, в условии when, в отчёте о парке.
+как удобно организации: словарь по пути
+ansible_facts['ansible_local']['site']['general'] даёт владельца,
+роль и версию стенда, а ansible_facts['ansible_local']['hardware'] —
+модель и ресурсы. Дальше это обычные переменные: в шаблоне,
+в условии when, в отчёте о парке.
 
 Раскладываем файлы плейбуком 02_custom_facts.yml:
 
@@ -394,29 +419,29 @@ hardware.fact, формат JSON:
       - name: Убедиться, что настраиваемый факт прочитан
         ansible.builtin.assert:
           that:
-            - ansible_local.site.general.owner is defined
-          success_msg: "Владелец машины из site.fact: {{ ansible_local.site.general.owner }}"
+            - ansible_facts['ansible_local']['site']['general']['owner'] is defined
+          success_msg: "Владелец машины из site.fact: {{ ansible_facts['ansible_local']['site']['general']['owner'] }}"
           fail_msg: "Настраиваемый факт не прочитан: проверьте /etc/ansible/facts.d на узле"
 
       - name: Показать значения настраиваемых фактов
         ansible.builtin.debug:
           msg:
             - "Файл site.fact (INI), секция general:"
-            - "  владелец: {{ ansible_local.site.general.owner }}"
-            - "  роль: {{ ansible_local.site.general.role }}"
-            - "  версия стенда: {{ ansible_local.site.general.version }}"
+            - "  владелец: {{ ansible_facts['ansible_local']['site']['general']['owner'] }}"
+            - "  роль: {{ ansible_facts['ansible_local']['site']['general']['role'] }}"
+            - "  версия стенда: {{ ansible_facts['ansible_local']['site']['general']['version'] }}"
             - "Файл hardware.fact (JSON), ключи верхнего уровня:"
-            - "  модель: {{ ansible_local.hardware.model }}"
-            - "  ядер: {{ ansible_local.hardware.cpu_cores }}"
-            - "  память, МБ: {{ ansible_local.hardware.memory_mb }}"
-            - "  куплена: {{ ansible_local.hardware.purchased }}"
+            - "  модель: {{ ansible_facts['ansible_local']['hardware']['model'] }}"
+            - "  ядер: {{ ansible_facts['ansible_local']['hardware']['cpu_cores'] }}"
+            - "  память, МБ: {{ ansible_facts['ansible_local']['hardware']['memory_mb'] }}"
+            - "  куплена: {{ ansible_facts['ansible_local']['hardware']['purchased'] }}"
 
 В первом play стоит gather_facts: false: факты в нём не нужны, а сбор
 стоит времени. Второй play собирает факты заново — уже после того, как
 файлы легли на место.
 
 ВАЖНО: НАБОР ФАКТОВ СОБИРАЕТСЯ В НАЧАЛЕ PLAY, ДО ЗАДАЧ. Если положить
-файл факта задачей и в том же play прочитать ansible_local, там будет
+файл факта задачей и в том же play прочитать ansible_facts['ansible_local'], там будет
 пусто. Поэтому в плейбуке два play. Тот же результат даёт задача
 ansible.builtin.setup в середине play, но два play читаются понятнее.
 Каталог facts.d из files/06_facts_templates — только заготовка: на узле
@@ -555,15 +580,15 @@ is file, is directory. Посмотрим их в деле — это после
   - name: Показать фильтры и тесты Jinja2 на данных инвентаря
     ansible.builtin.debug:
       msg:
-        - "upper: {{ ansible_os_family | upper }}"
+        - "upper: {{ ansible_facts['os_family'] | upper }}"
         - "length: {{ groups['linux'] | length }}"
         - "join: {{ groups['linux'] | join(' + ') }}"
         - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
         - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
         - "b64encode: {{ 'engineer' | b64encode }}"
         - "default: {{ lab_owner | default('не назначен') }}"
-        - "is defined: {{ ansible_local.site.general.owner is defined }}"
-        - "is not none: {{ ansible_processor_vcpus is not none }}"
+        - "is defined: {{ ansible_facts['ansible_local']['site']['general']['owner'] is defined }}"
+        - "is not none: {{ ansible_facts['processor_vcpus'] is not none }}"
         - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"
 
   ansible-playbook 05_hostvars.yml
@@ -752,26 +777,26 @@ mode: "0555" на страницу сайта делает её исполняе
       <tr><th>Дистрибутив</th><td>{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}</td></tr>
       <tr><th>Ядер</th><td>{{ ansible_facts['processor_vcpus'] }}</td></tr>
       <tr><th>Память, МБ</th><td>{{ ansible_facts['memtotal_mb'] }}</td></tr>
-      <tr><th>Владелец машины</th><td>{{ ansible_local.site.general.owner | default(site_owner_default) }}</td></tr>
-      <tr><th>Роль машины</th><td>{{ ansible_local.site.general.role | default('не назначена') }}</td></tr>
+      <tr><th>Владелец машины</th><td>{{ ansible_facts['ansible_local']['site']['general']['owner'] | default(site_owner_default) }}</td></tr>
+      <tr><th>Роль машины</th><td>{{ ansible_facts['ansible_local']['site']['general']['role'] | default('не назначена') }}</td></tr>
     </table>
 
     <h2>Машины парка</h2>
     <ul>
   {% for host in groups['linux'] %}
-      <li>{{ host }} — {{ hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') }}</li>
+      <li>{{ host }} — {{ hostvars[host]['ansible_facts']['default_ipv4']['address'] | default('адрес неизвестен') }}</li>
   {% endfor %}
     </ul>
 
     <p>Группы этой машины: {{ group_names | join(', ') }}</p>
-    <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_date_time.iso8601 }}</p>
+    <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_facts['date_time']['iso8601'] }}</p>
   </body>
   </html>
 
 Три строки, ради которых шаблон и написан. {{ inventory_hostname }}
 в заголовке — имя машины из инвентаря. {{ ansible_facts['default_ipv4']
 ['address'] }} — адрес: сначала словарь по ключу default_ipv4, потом
-из него ключ address. {{ ansible_local.site.general.owner |
+из него ключ address. {{ ansible_facts['ansible_local']['site']['general']['owner'] |
 default(site_owner_default) }} — владелец из настраиваемого факта,
 а если факта нет, значение переменной из плейбука.
 
@@ -863,14 +888,14 @@ img src="" в готовом файле — это запрос к несуще�
   Учебный стенд курса Ansible: машины группы linux
   -------------------------------------------------------------------------
   {% for host in groups['linux'] %}
-  {% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
-  {% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+  {% set address = hostvars[host]['ansible_facts']['default_ipv4']['address'] | default('адрес неизвестен') %}
+  {% set family = hostvars[host]['ansible_facts']['os_family'] | default('семейство неизвестно') %}
   {{ '%-8s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
   {% endfor %}
   -------------------------------------------------------------------------
   Всего машин: {{ groups['linux'] | length }}
-  Эта машина: {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
-  Владелец машины: {{ ansible_local.site.general.owner | default('не назначен') }}
+  Эта машина: {{ inventory_hostname }} ({{ ansible_facts['default_ipv4']['address'] }})
+  Владелец машины: {{ ansible_facts['ansible_local']['site']['general']['owner'] | default('не назначен') }}
 
 {% for host in groups['linux'] %} — начало цикла: список из трёх имён,
 тело выполняется три раза. Вывод одинаков на всех машинах, потому что
@@ -967,25 +992,25 @@ img src="" в готовом файле — это запрос к несуще�
 
       - name: Собрать адреса всего парка из hostvars
         ansible.builtin.debug:
-          msg: "{{ item }}: {{ hostvars[item]['ansible_default_ipv4']['address'] | default('фактов нет') }}"
+          msg: "{{ item }}: {{ hostvars[item]['ansible_facts']['default_ipv4']['address'] | default('фактов нет') }}"
         loop: "{{ groups['linux'] }}"
 
       - name: Показать адрес web2, глядя с этой машины
         ansible.builtin.debug:
-          msg: "web2: {{ hostvars['web2']['ansible_default_ipv4']['address'] }}"
+          msg: "web2: {{ hostvars['web2']['ansible_facts']['default_ipv4']['address'] }}"
 
       - name: Показать фильтры и тесты Jinja2 на данных инвентаря
         ansible.builtin.debug:
           msg:
-            - "upper: {{ ansible_os_family | upper }}"
+            - "upper: {{ ansible_facts['os_family'] | upper }}"
             - "length: {{ groups['linux'] | length }}"
             - "join: {{ groups['linux'] | join(' + ') }}"
             - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
             - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
             - "b64encode: {{ 'engineer' | b64encode }}"
             - "default: {{ lab_owner | default('не назначен') }}"
-            - "is defined: {{ ansible_local.site.general.owner is defined }}"
-            - "is not none: {{ ansible_processor_vcpus is not none }}"
+            - "is defined: {{ ansible_facts['ansible_local']['site']['general']['owner'] is defined }}"
+            - "is not none: {{ ansible_facts['processor_vcpus'] is not none }}"
             - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"
 
 Запускаем:
@@ -1027,7 +1052,7 @@ img src="" в готовом файле — это запрос к несуще�
   TASK [Показать адрес web2, глядя с этой машины]
   fatal: [db1]: FAILED! => {
       "msg": "The task includes an option with an undefined variable. ...
-              'dict object' has no attribute 'ansible_default_ipv4' ..."
+              'dict object' has no attribute 'ansible_facts['default_ipv4']' ..."
   }
 
 Задача про адрес web2 падает на db1, потому что в этом прогоне
@@ -1149,9 +1174,9 @@ validate: "nginx -t" без %s, Ansible проверит текущую конф
               'ansible_facts' is undefined ..."
   }
 
-Факты требуются: любому шаблону с ansible_facts или ansible_local,
-условиям when по семейству ОС и версии, выводу адреса, ядер и памяти
-в отчёте, расчёту свободного места.
+Факты требуются: любому шаблону, который берёт значения из
+ansible_facts, условиям when по семейству ОС и версии, выводу адреса,
+ядер и памяти в отчёте, расчёту свободного места.
 
 СРЕДНИЙ ПУТЬ, который чаще всего и нужен: не собирать факты всему
 play, а вызвать setup одной задачей с нужным набором.
@@ -1188,6 +1213,77 @@ play, а вызвать setup одной задачей с нужным набо
 
 
 =========================================================================
+ШАГ 13. ВЫКЛЮЧАЕМ АВТОИНЪЕКЦИЮ ФАКТОВ
+=========================================================================
+
+От предупреждения INJECT_FACTS_AS_VARS из шага 1 избавляет одна
+строка. Настройка inject_facts_as_vars в секции [defaults] файла
+ansible.cfg управляет подстановкой коротких имён фактов в переменные:
+
+  [defaults]
+  inject_facts_as_vars = false
+
+Значение по умолчанию — true: Ansible дополнительно кладёт каждый
+факт в переменные play под именем с префиксом — ansible_os_family,
+ansible_hostname. Значение false оставляет факты только в словаре
+ansible_facts, где ключи записаны без префикса: os_family, hostname.
+Настройку читает и переменная окружения ANSIBLE_INJECT_FACT_VARS.
+
+ПОЧЕМУ ИМЕННО ТАК: false включает сегодня поведение ansible-core
+2.24. В 2.24 подстановки не будет, и плейбук, который на неё опирался,
+упадёт на первом же запуске. Пока стенд под рукой, такую поломку
+дешевле найти самому: на своей машине, до обновления ansible-core,
+а не на чужой после него. Заодно уходит предупреждение при каждом
+запуске.
+
+Добавьте строку в [defaults] файла ~/ansible-lab/ansible.cfg и
+сравните прогон до и после:
+
+  ansible-playbook 01_facts.yml
+  [DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True`
+  is deprecated, top-level facts will not be auto injected after
+  the change.
+
+  # после правки ansible.cfg
+  ansible-playbook 01_facts.yml
+  PLAY RECAP
+  web1  : ok=6  changed=0  unreachable=0  failed=0
+
+  ansible-playbook 03_index_template.yml --limit web
+  PLAY RECAP
+  web1  : ok=3  changed=0  unreachable=0  failed=0
+
+ВАЖНО: ПРАВКА УБИРАЕТ ШУМ, А НЕ РЕЗУЛЬТАТ. Плейбуки практики написаны
+через ansible_facts['...'], поэтому ok, changed и PLAY RECAP после
+правки те же, а строк INJECT_FACTS_AS_VARS в выводе больше нет.
+Обратная проверка тоже полезна: если после правки задача упала
+с «'ansible_os_family' is undefined», значит, в этой задаче остался
+короткий доступ к факту — перепишите его на ansible_facts['os_family'].
+
+ПРОВЕРКА:
+
+  ansible-playbook 01_facts.yml 2>&1 | grep -c INJECT_FACTS_AS_VARS
+  0
+  ansible-playbook 03_index_template.yml --limit web
+  web1  : ok=3  changed=0  unreachable=0  failed=0
+
+ЧЕГО НЕ ДЕЛАТЬ: не включайте inject_facts_as_vars = false в проекте,
+где работают чужие роли из Galaxy. Роли до сих пор пишут
+ansible_os_family в своих tasks и defaults: это массовая практика,
+а не единичная оплошность, и с выключенной подстановкой такая роль
+падает на первом же обращении к факту. Поэтому в курсе настройка
+включена в проекте практик 1-13 — том, что мы ведём с практики 2, —
+и в проекте практики 10, а в проекте практики 15 её нет: там работает
+роль geerlingguy.nginx из Galaxy. Это осознанное решение, а не
+забывчивость — в своём коде мы готовимся к 2.24, а в чужом ждём
+автора роли.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: ansible.cfg — такой же код курса, как плейбуки.
+Проверить будущее поведение на учебном стенде дешевле, чем узнать
+о нём из аварии на рабочем.
+
+
+=========================================================================
 ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
 =========================================================================
 
@@ -1207,17 +1303,19 @@ attribute 'ansible_distibution' — смысл один: ключа с таки�
 
      ansible web1 -m ansible.builtin.setup -a "filter=ansible_distribution*"
 
-  3. Не смешаны ли длинная и короткая формы: работают
-     ansible_facts['distribution'] и ansible_distribution, а запись
-     ansible_facts.distribution без кавычек — уже ошибка.
+  3. Правильная ли форма записи: в курсе верна одна —
+     ansible_facts['distribution']. Короткое имя ansible_distribution
+     Ansible объявил устаревшим и в 2.24 уберёт, а опечатку внутри
+     кавычек глаз находит быстрее, чем в склеенном имени.
 
 ИСПРАВЛЕНО: в прежней версии курса опечатка ansible_distibution —
 без буквы r после disti — стояла в плейбуке с переменными, где факт
 выводился модулем debug. Ansible при этом не падал: он печатал
 «VARIABLE IS NOT DEFINED!», и это сбивало с толку — казалось, что
-факт пропал, хотя дело было в имени. Обе формы записи верны, но
-имя внутри кавычек видно глазом, а имя, склеенное из префикса
-и факта, — нет.
+факт пропал, хотя дело было в имени. Верна одна форма записи —
+ansible_facts['distribution']: имя внутри кавычек видно глазом,
+а короткое имя, склеенное из префикса и факта, искать в плейбуке
+труднее — и именно от него Ansible отказывается.
 
 
 ПРОБЛЕМА: VARIABLE IS NOT DEFINED!
@@ -1248,7 +1346,7 @@ attribute 'ansible_distibution' — смысл один: ключа с таки�
 
   fatal: [db1]: FAILED! => {
       "msg": "The task includes an option with an undefined variable. ...
-              'dict object' has no attribute 'ansible_default_ipv4' ..."
+              'dict object' has no attribute 'ansible_facts['default_ipv4']' ..."
   }
 
 Пример разобран в шаге 10: запустите ansible-playbook 05_hostvars.yml
@@ -1258,7 +1356,7 @@ attribute 'ansible_distibution' — смысл один: ключа с таки�
 только пока эта машина есть в списке хостов play. Запустите плейбук
 с --limit db1, и обращение к фактам web2 сорвёт задачу: у машины,
 не попавшей в прогон, факты не собраны, и в ошибке будет стоять
-«'dict object' has no attribute 'ansible_default_ipv4'». Защита одна —
+«'dict object' has no attribute 'ansible_facts['default_ipv4']'». Защита одна —
 фильтр default у каждого значения, которое берётся через hostvars.
 
 
@@ -1331,7 +1429,7 @@ src: templates/index.j2, модуль template будет искать его и
 шаблонов Jinja2, files/ — для готовых файлов.
 
 
-ПРОБЛЕМА: факт не появился: ansible_local пуст
+ПРОБЛЕМА: факт не появился: ansible_facts['ansible_local'] пуст
 
   ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
   web1 | SUCCESS => {
@@ -1365,16 +1463,17 @@ src: templates/index.j2, модуль template будет искать его и
   6. Права на файл: setup ходит на узел пользователем engineer, поэтому
      файл с правами 0600 и владельцем root прочитан не будет.
 
-ЧЕГО НЕ ДЕЛАТЬ: не берите значение настраиваемого факта по короткому
-пути ansible_local.site.owner, если файл написан в формате INI. Путь
-там на уровень длиннее, и задача упадёт с сообщением, что такого
-атрибута нет, — хотя факт собран и виден в выводе filter=ansible_local.
-Причина не в опечатке, а в формате: в INI имя секции становится ещё
-одним уровнем вложенности. Правильный путь для нашего файла —
-ansible_local.site.general.owner (файл site.fact, секция general, ключ
-owner). Одноуровневый путь ansible_local.<файл>.<ключ> годится только
-для JSON: у нас это ansible_local.hardware.cpu_cores. Дерево целиком
-видно в выводе filter=ansible_local.
+ЧЕГО НЕ ДЕЛАТЬ: не берите значение настраиваемого факта по неполному
+пути — ansible_facts['ansible_local']['site']['owner'], если файл
+написан в формате INI. Путь там на уровень длиннее, и задача упадёт
+с сообщением, что такого атрибута нет, — хотя факт собран и виден
+в выводе filter=ansible_local. Причина не в опечатке, а в формате:
+в INI имя секции становится ещё одним уровнем вложенности.
+Правильный путь для нашего файла —
+ansible_facts['ansible_local']['site']['general']['owner']: файл
+site.fact, секция general, ключ owner. Путь без уровня секции —
+ansible_facts['ansible_local']['hardware']['cpu_cores'] — годится
+только для JSON. Дерево целиком видно в выводе filter=ansible_local.
 
 
 ПРОБЛЕМА: ERROR! We were unable to read either as JSON nor YAML
@@ -1538,7 +1637,7 @@ msg: "Машина {{ inventory_hostname }} — и кавычка не закр�
 
 ВРЕМЯ ПРОВЕРКИ: минуты три. Если что-то не сходится, начните с раздела
 «Если что-то пошло не так»: почти все расхождения — это опечатка
-в имени факта, незакрытая кавычка или пустой ansible_local.
+в имени факта, незакрытая кавычка или пустой ansible_facts['ansible_local'].
 
 
 =========================================================================

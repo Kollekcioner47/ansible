@@ -196,17 +196,17 @@ Linux мы не размазываем по задачам условиями wh
     - python3-firewall
     - "{{ web_package }}"
 
-Файл выбирается по факту ansible_os_family, значение которого —
+Файл выбирается по факту ansible_facts['os_family'], значение которого —
 Debian или RedHat. Подключается он задачей include_vars, и это
 единственное место в плейбуках, где встречается имя семейства:
 
   pre_tasks:
     - name: Прочитать переменные для семейства ОС
       ansible.builtin.include_vars:
-        file: "vars/{{ ansible_os_family }}.yml"
+        file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
 ПОЧЕМУ ИМЕННО ТАК: include_vars читает файл во время прогона, когда
-факты уже собраны, поэтому «vars/{{ ansible_os_family }}.yml»
+факты уже собраны, поэтому «vars/{{ ansible_facts['os_family'] }}.yml»
 превращается в vars/Debian.yml на web1 и в vars/RedHat.yml на db1.
 Читается он в pre_tasks — до первой задачи, которой нужны переменные.
 
@@ -229,7 +229,7 @@ Debian или RedHat. Подключается он задачей include_vars,
   }
 
 Если на db1 вы увидели apache2, значит, файл RedHat.yml не читается:
-проверьте имя файла (регистр букв важен) и значение ansible_os_family.
+проверьте имя файла (регистр букв важен) и значение ansible_facts['os_family'].
 
 
 =========================================================================
@@ -258,7 +258,7 @@ Debian или RedHat. Подключается он задачей include_vars,
     pre_tasks:
       - name: Прочитать переменные для семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
     tasks:
       - name: Создать группу для службы выкладки
@@ -487,19 +487,19 @@ files/09_admin_tasks/03_sudoers.yml:
     pre_tasks:
       - name: Прочитать переменные для семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
     tasks:
       - name: Обновить кэш пакетов, если он старше часа (Debian)
         ansible.builtin.apt:
           update_cache: true
           cache_valid_time: 3600
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Убрать пакеты, ставшие ненужными (Debian)
         ansible.builtin.apt:
           autoremove: true
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Установить пакеты по одному (Debian)
         ansible.builtin.apt:
@@ -508,7 +508,7 @@ files/09_admin_tasks/03_sudoers.yml:
         loop: "{{ admin_packages }}"
         loop_control:
           label: "{{ item }}"
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Установить пакеты по одному (RedHat)
         ansible.builtin.dnf:
@@ -517,20 +517,20 @@ files/09_admin_tasks/03_sudoers.yml:
         loop: "{{ admin_packages }}"
         loop_control:
           label: "{{ item }}"
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
       - name: Подключить репозиторий с исходниками Ubuntu (Debian)
         ansible.builtin.deb822_repository:
           name: ubuntu-sources
           types: deb-src
           uris: http://archive.ubuntu.com/ubuntu
-          suites: "{{ ansible_distribution_release }}"
+          suites: "{{ ansible_facts['distribution_release'] }}"
           components:
             - main
             - universe
           signed_by: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           state: present
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
         notify: Обновить кэш apt
 
       - name: Подключить репозиторий EPEL (RedHat)
@@ -542,13 +542,13 @@ files/09_admin_tasks/03_sudoers.yml:
           gpgkey: https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-$releasever
           enabled: true
           state: present
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
     handlers:
       - name: Обновить кэш apt
         ansible.builtin.apt:
           update_cache: true
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
 РАЗБОР. apt и dnf — разные модули, и это не наша прихоть: у каждого
 свой пакетный менеджер. Задачи-близнецы с одинаковыми параметрами
@@ -629,7 +629,7 @@ autoremove — уборка зависимостей, которые больш�
     pre_tasks:
       - name: Прочитать переменные для семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
     tasks:
       - name: Веб-сервер запущен, включён в автозапуск и не заблокирован
@@ -783,7 +783,7 @@ Timezone=Europe/Moscow — вывод timedatectl: служба отработа
     pre_tasks:
       - name: Прочитать переменные для семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
     tasks:
       - name: Поставить пакет межсетевого экрана
@@ -798,7 +798,7 @@ Timezone=Europe/Moscow — вывод timedatectl: служба отработа
           enabled: true
 
       - name: Открыть порты на Ubuntu (ufw)
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
         block:
           - name: Разрешить 22/tcp, иначе следующий прогон не подключится
             community.general.ufw:
@@ -819,7 +819,7 @@ Timezone=Europe/Moscow — вывод timedatectl: служба отработа
               direction: incoming
 
       - name: Открыть службу http на Rocky (firewalld)
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
         block:
           - name: Разрешить службу http в зоне public
             ansible.posix.firewalld:
@@ -1096,7 +1096,7 @@ files/09_admin_tasks/admin_tasks.yml. Он начинается так:
     pre_tasks:
       - name: Прочитать переменные для семейства ОС
         ansible.builtin.include_vars:
-          file: "vars/{{ ansible_os_family }}.yml"
+          file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
     tasks:
       # --- пользователи и группы -------------------------------------------
@@ -1118,13 +1118,13 @@ cron и параметр ядра. Новых задач три.
         ansible.builtin.apt:
           name: "{{ admin_packages }}"
           state: present
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: Установить административные пакеты (RedHat)
         ansible.builtin.dnf:
           name: "{{ admin_packages }}"
           state: present
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
 ПОЧЕМУ ИМЕННО ТАК: пять пакетов ставятся одной транзакцией, а не
 пятью запусками пакетного менеджера. На пяти машинах разница
@@ -1149,7 +1149,7 @@ cron и параметр ядра. Новых задач три.
       - name: Обновить кэш apt
         ansible.builtin.apt:
           update_cache: true
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
 ПОЧЕМУ ЗДЕСЬ НУЖЕН ОБРАБОТЧИК: модуль deb822_repository в доку-
 ментации прямо предупреждает, что не обновляет кэш сам. Без

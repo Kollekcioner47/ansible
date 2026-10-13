@@ -126,6 +126,14 @@ site.yml вызывает нашу роль web_admin: apache2 на web1 и web2
 Настройки проекта — файл ansible.cfg из files/15_galaxy_collections
 (пояснения в его комментариях повторяют то, что сказано в шаге 1):
 
+  # ansible.cfg — настройки учебного проекта практики 15.
+  #
+  # Файл лежит в каталоге проекта, поэтому Ansible читает его сам:
+  # ansible.cfg в текущем каталоге сильнее ~/.ansible.cfg и
+  # /etc/ansible/ansible.cfg. Порядок разобран в практике 2.
+  #
+  # Секция называется [defaults]. Секция [default] молча игнорируется.
+
   [defaults]
   inventory = ./inventory.ini
   host_key_checking = False
@@ -135,14 +143,30 @@ site.yml вызывает нашу роль web_admin: apache2 на web1 и web2
   callback_result_format = yaml
   forks = 10
 
-  # Значение из ansible.cfg заменяет список по умолчанию целиком.
-  # Первый каталог — ещё и место установки: роль из Galaxy ляжет
-  # в ./galaxy_roles.
+  # Автоинъекцию фактов (inject_facts_as_vars) здесь не выключаем:
+  # роль geerlingguy.nginx из Galaxy ещё может опираться на короткие
+  # имена фактов (ansible_os_family) — с выключенной автоинъекцией
+  # она упадёт. В остальных проектах курса настройка выключена.
+
+  # Где Ansible ищет роли: каталоги перечислены через двоеточие и
+  # читаются слева направо. Значение из ansible.cfg ЗАМЕНЯЕТ список
+  # по умолчанию (~/.ansible/roles:/usr/share/ansible/roles:
+  # /etc/ansible/roles), а не дополняет его, поэтому здесь перечислено
+  # всё, что нужно: свои роли, роли из Galaxy и роли из пакетов ОС.
+  #
+  # Первый каталог списка — ещё и место установки: роль, поставленная
+  # командой ansible-galaxy role install, ляжет в ./galaxy_roles.
   roles_path = ./galaxy_roles:./roles:/usr/share/ansible/roles
 
-  # ansible-galaxy дописывает к этому пути каталог ansible_collections,
-  # поэтому установка пойдёт в ./collections/ansible_collections.
+  # Где Ansible ищет коллекции. К указанному каталогу ansible-galaxy
+  # дописывает ansible_collections, поэтому установка пойдёт в
+  # ./collections/ansible_collections. Такой же каталог рядом с
+  # плейбуком Ansible находит и без этой настройки.
   collections_path = ./collections:/usr/share/ansible/collections
+
+Автоинъекция фактов здесь оставлена включённой: роль geerlingguy.nginx
+из Galaxy ещё может опираться на короткое имя ansible_os_family,
+и с выключенной автоинъекцией она упадёт (см. комментарий в файле).
 
 Три каталога в roles_path — это не «на всякий случай». ./galaxy_roles
 отведён ролям из Galaxy: именно туда их ставит ansible-galaxy.
@@ -814,7 +838,7 @@ redhat.rhel_system_roles.timesync. Проверьте на своей машин
         - Ставит и включает веб-сервер (apache2 на Debian, httpd на RedHat),
           раскладывает страницу сайта из шаблона index.j2 и оформление
           style.css, открывает порт в межсетевом экране.
-        - Ветка выбирается по факту ansible_os_family. Нужны коллекции
+        - Ветка выбирается по факту ansible_facts['os_family']. Нужны коллекции
           ansible.posix и community.general и права root.
       author:
         - engineer

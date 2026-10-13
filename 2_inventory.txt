@@ -14,9 +14,10 @@
 по семейству операционной системы и группу, собранную из групп.
 Разберём, чем имя машины отличается от адреса.
 
-Создадим ansible.cfg: семь параметров — inventory, host_key_checking,
-remote_user, interpreter_python, stdout_callback, callback_result_format
-и forks, — четыре места чтения конфигурации и приоритет между ними.
+Создадим ansible.cfg: восемь параметров — inventory, host_key_checking,
+remote_user, interpreter_python, stdout_callback, callback_result_format,
+forks и inject_facts_as_vars, — четыре места чтения конфигурации
+и приоритет между ними.
 Перенесём подключение в group_vars и host_vars, чтобы пользователь
 и ключ были заданы один раз на парк, а различия между Ubuntu
 и Rocky Linux стали переменными, а не условиями.
@@ -187,6 +188,10 @@ web1 ansible_host=10.0.2.11 — строка машины. Первое слов
   stdout_callback = default
   callback_result_format = yaml
   forks = 10
+  # Автоинъекция фактов: короткие имена вида ansible_os_family объявлены
+  # устаревшими и удаляются в ansible-core 2.24, поэтому она выключена.
+  # Факты доступны только через словарь: ansible_facts['os_family'].
+  inject_facts_as_vars = false
   EOF
 
 Имя секции здесь — не украшение: Ansible ищет настройки по именам
@@ -244,6 +249,17 @@ ansible-playbook; default — обычный человекочитаемый в
   ERROR! Invalid callback for stdout specified: yaml
 
 Формат вывода задаётся ключом callback_result_format.
+
+ПОЧЕМУ ИМЕННО ТАК: inject_facts_as_vars = false выключает автоинъекцию
+фактов. По умолчанию Ansible кладёт собранные факты ещё и в переменные
+с короткими именами — ansible_os_family, ansible_hostname и другие;
+такие имена объявлены устаревшими (предупреждение INJECT_FACTS_AS_VARS)
+и в ansible-core 2.24 их не станет. С выключенной автоинъекцией факт
+остаётся только в словаре ansible_facts, поэтому плейбук обязан писать
+ansible_facts['os_family']: запись ansible_os_family просто не найдётся.
+В проекте курса настройка выключена намеренно — так каждый прогон
+заодно проверяет, что ни одна задача не держится за устаревшее имя.
+Устройство словаря фактов и историю коротких имён разбирает практика 6.
 
 ЧЕТЫРЕ МЕСТА, ОТКУДА ANSIBLE БЕРЁТ КОНФИГУРАЦИЮ. Читается не всё,
 что найдено, а только первый файл из списка:
