@@ -37,19 +37,19 @@
     - name: Убедиться, что настраиваемый факт прочитан
       ansible.builtin.assert:
         that:
-          - ansible_local.site.general.owner is defined
-        success_msg: "Владелец машины из site.fact: {{ ansible_local.site.general.owner }}"
+          - ansible_facts['ansible_local']['site']['general']['owner'] is defined
+        success_msg: "Владелец машины из site.fact: {{ ansible_facts['ansible_local']['site']['general']['owner'] }}"
         fail_msg: "Настраиваемый факт не прочитан: проверьте /etc/ansible/facts.d на узле"
 
     - name: Показать значения настраиваемых фактов
       ansible.builtin.debug:
         msg:
           - "Файл site.fact (INI), секция general:"
-          - "  владелец: {{ ansible_local.site.general.owner }}"
-          - "  роль: {{ ansible_local.site.general.role }}"
-          - "  версия стенда: {{ ansible_local.site.general.version }}"
+          - "  владелец: {{ ansible_facts['ansible_local']['site']['general']['owner'] }}"
+          - "  роль: {{ ansible_facts['ansible_local']['site']['general']['role'] }}"
+          - "  версия стенда: {{ ansible_facts['ansible_local']['site']['general']['version'] }}"
           - "Файл hardware.fact (JSON), ключи верхнего уровня:"
-          - "  модель: {{ ansible_local.hardware.model }}"
-          - "  ядер: {{ ansible_local.hardware.cpu_cores }}"
-          - "  память, МБ: {{ ansible_local.hardware.memory_mb }}"
-          - "  куплена: {{ ansible_local.hardware.purchased }}"
+          - "  модель: {{ ansible_facts['ansible_local']['hardware']['model'] }}"
+          - "  ядер: {{ ansible_facts['ansible_local']['hardware']['cpu_cores'] }}"
+          - "  память, МБ: {{ ansible_facts['ansible_local']['hardware']['memory_mb'] }}"
+          - "  куплена: {{ ansible_facts['ansible_local']['hardware']['purchased'] }}"

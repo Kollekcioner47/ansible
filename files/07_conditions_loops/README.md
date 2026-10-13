@@ -53,7 +53,7 @@ cp -r <репозиторий>/files/07_conditions_loops/. .
 в текущем каталоге, в `~/.ansible.cfg` и в `/etc/ansible/ansible.cfg` —
 и вверх по каталогам не поднимается. Из подкаталога не нашлись бы
 ни `inventory.ini`, ни `remote_user` из практики 2. Каталог `vars/`
-лежит рядом с плейбуками: путь `vars/{{ ansible_os_family }}.yml`
+лежит рядом с плейбуками: путь `vars/{{ ansible_facts['os_family'] }}.yml`
 в задаче `include_vars` отсчитывается от каталога плейбука.
 
 ```

@@ -15,18 +15,18 @@
     <tr><th>Дистрибутив</th><td>{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}</td></tr>
     <tr><th>Ядер</th><td>{{ ansible_facts['processor_vcpus'] }}</td></tr>
     <tr><th>Память, МБ</th><td>{{ ansible_facts['memtotal_mb'] }}</td></tr>
-    <tr><th>Владелец машины</th><td>{{ ansible_local.site.general.owner | default(site_owner_default) }}</td></tr>
-    <tr><th>Роль машины</th><td>{{ ansible_local.site.general.role | default('не назначена') }}</td></tr>
+    <tr><th>Владелец машины</th><td>{{ ansible_facts['ansible_local']['site']['general']['owner'] | default(site_owner_default) }}</td></tr>
+    <tr><th>Роль машины</th><td>{{ ansible_facts['ansible_local']['site']['general']['role'] | default('не назначена') }}</td></tr>
   </table>
 
   <h2>Машины парка</h2>
   <ul>
 {% for host in groups['linux'] %}
-    <li>{{ host }} — {{ hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') }}</li>
+    <li>{{ host }} — {{ hostvars[host]['ansible_facts']['default_ipv4']['address'] | default('адрес неизвестен') }}</li>
 {% endfor %}
   </ul>
 
   <p>Группы этой машины: {{ group_names | join(', ') }}</p>
-  <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_date_time.iso8601 }}</p>
+  <p>Страница собрана из шаблона index.j2, время сборки: {{ ansible_facts['date_time']['iso8601'] }}</p>
 </body>
 </html>

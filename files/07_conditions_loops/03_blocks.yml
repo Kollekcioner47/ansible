@@ -28,7 +28,7 @@
             name: apache2
             state: absent
 
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Ветка Rocky Linux — установить и запустить httpd
       block:
@@ -49,7 +49,7 @@
             name: httpd
             state: absent
 
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
 
 - name: Опыт с откатом — задача падает, rescue откатывает, always подводит итог
   hosts: web:db
