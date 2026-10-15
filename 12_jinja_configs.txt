@@ -15,7 +15,8 @@
 Соберём из переменных четыре настоящие конфигурации: виртуальный хост
 nginx, upstream с циклом по бэкендам, sshd_config циклом по словарю
 параметров, motd, resolv.conf и chrony.conf. Каждую проверим
-до подстановки: nginx -t и sshd -t -f.
+до подстановки: sshd -t -f %s — там, где validate применим;
+конфигурацию nginx проверим целиком после раскладки.
 
 =========================================================================
 ЧТО ПОНАДОБИТСЯ
@@ -262,27 +263,47 @@ files/12_jinja_configs/templates/nginx_vhost.j2:
           state: present
           update_cache: true
           cache_valid_time: 3600
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
 
       - name: "Установить nginx из репозитория ОС (RedHat)"
         ansible.builtin.dnf:
           name: nginx
           state: present
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
 
       - name: "Убрать виртуальный хост по умолчанию (Debian)"
         ansible.builtin.file:
           path: /etc/nginx/sites-enabled/default
           state: absent
-        when: ansible_os_family == "Debian"
+        when: ansible_facts['os_family'] == "Debian"
         notify: Перезапустить nginx
 
       - name: "Убрать виртуальный хост по умолчанию (RedHat)"
         ansible.builtin.file:
           path: /etc/nginx/conf.d/default.conf
           state: absent
-        when: ansible_os_family == "RedHat"
+        when: ansible_facts['os_family'] == "RedHat"
         notify: Перезапустить nginx
+
+      # Проверка ДО раскладки наших файлов: если конфигурация сломана
+      # до плейбука, узнать об этом надо сейчас, а не после того, как
+      # в conf.d появились наши файлы. Отдельной задачей — по той же
+      # причине, что и в конце: validate для этого не годится.
+      - name: "Проверить конфигурацию nginx до раскладки наших файлов"
+        ansible.builtin.command:
+          cmd: nginx -t
+        changed_when: false
+        register: nginx_before
+
+      - name: "Убедиться, что конфигурация исправна до наших правок"
+        ansible.builtin.assert:
+          that:
+            - nginx_before.rc == 0
+          fail_msg: >-
+            nginx -t не прошёл до наших правок: rc={{ nginx_before.rc }},
+            {{ nginx_before.stderr | default('') | trim }}.
+            Сначала почините конфигурацию, потом запускайте этот плейбук.
+          success_msg: "Конфигурация nginx исправна до наших правок."
 
       # Порт 8080 открывается отдельной задачей: на web1 включён ufw
       # с политикой deny, и без правила curl с управляющей машины
@@ -319,7 +340,6 @@ files/12_jinja_configs/templates/nginx_vhost.j2:
           mode: "0644"
           trim_blocks: true
           lstrip_blocks: true
-          validate: "nginx -t"
           backup: true
         notify: Перезапустить nginx
 
@@ -332,14 +352,52 @@ files/12_jinja_configs/templates/nginx_vhost.j2:
           mode: "0644"
           trim_blocks: true
           lstrip_blocks: true
-          validate: "nginx -t"
           backup: true
         notify: Перезапустить nginx
 
+      # validate здесь не подходит: у модулей copy и template в команде
+      # обязателен %s (иначе задача падает с «validate must contain %s»),
+      # а подставить его для nginx нечем: nginx проверяет конфигурацию
+      # целиком, и на временном файле-фрагменте из conf.d проверка падает
+      # («server directive is not allowed here»). Поэтому файлы сначала
+      # кладутся на место, а затем проверяется вся конфигурация — вместе
+      # с нашим фрагментом.
       - name: "Проверить конфигурацию nginx целиком"
         ansible.builtin.command:
           cmd: nginx -t
         changed_when: false
+        failed_when: false
+        register: nginx_check
+
+      # Если проверка не прошла, файлы, добавленные этим плейбуком,
+      # убираются, конфигурация проверяется ещё раз (она должна снова
+      # проходить) и только после этого прогон останавливается. Перезапуск
+      # не нужен: обработчик не вызывался, служба работает на прежней
+      # конфигурации.
+      - name: "Проверка не прошла: убрать наши файлы и проверить снова"
+        when: nginx_check.rc != 0
+        block:
+          - name: "Убрать файлы, которые добавил плейбук"
+            ansible.builtin.file:
+              path: "{{ item }}"
+              state: absent
+            loop:
+              - "/etc/nginx/conf.d/{{ nginx_upstream_name }}.conf"
+              - "/etc/nginx/conf.d/{{ nginx_server_name }}.conf"
+
+          - name: "Проверить конфигурацию после отката"
+            ansible.builtin.command:
+              cmd: nginx -t
+            changed_when: false
+            failed_when: false
+            register: nginx_check_after
+
+          - name: "Остановить прогон: конфигурация была сломана"
+            ansible.builtin.fail:
+              msg: >-
+                nginx -t не прошёл: {{ nginx_check.stderr | default('') | trim }}.
+                Файлы, добавленные плейбуком, убраны; проверка после отката
+                вернула rc={{ nginx_check_after.rc }}.
 
 Две задачи про виртуальный хост по умолчанию стоят здесь не для
 красоты. Пакет nginx ставит свой виртуальный хост, и на Ubuntu он
@@ -361,18 +419,34 @@ ansible.builtin.systemd осталось синонимом — старые п�
 и примеры из интернета с ним работают, но в новом тексте пишем
 systemd_service. Разбор модуля — в практике 9.
 
-ПРО ПАРАМЕТР validate ГОВОРИМ ЧЕСТНО. В задаче стоит validate: "nginx -t"
-без %s: проверка идёт до подмены файла и смотрит конфигурацию, которая
-уже лежит на узле. Фрагмент (server { ... } для conf.d) так проверить
-нельзя, и попытка написать validate: "nginx -t -c %s" падает
-с «nginx: [emerg] "server" directive is not allowed here»: директива
-server допустима только внутри блока http. Поэтому новый фрагмент
-проверяет отдельная задача nginx -t после того, как файл на месте.
+ПРО ПАРАМЕТР validate ГОВОРИМ ЧЕСТНО. В этих задачах его нет намеренно.
+В validate место подстановки %s обязательно: модуль кладёт файл во
+временный и подставляет его путь в команду, а без %s задача падает
+сразу, ещё до всякой проверки:
 
-ПРИ НЕУДАЧНОЙ ПРОВЕРКЕ задача падает, файл на узле остаётся прежним,
-обработчик не вызывается, служба работает на старой конфигурации.
-ПОЧЕМУ ИМЕННО ТАК: backup: true оставляет рядом с новым файлом
-предыдущий, и откат — это копирование.
+  fatal: [web1]: FAILED! => {"changed": false,
+      "msg": "validate must contain %s: nginx -t"}
+
+Подставить %s для nginx нечем: nginx проверяет конфигурацию целиком,
+а временный файл — только фрагмент для conf.d. Попытка написать
+validate: "nginx -t -c %s" падает с «nginx: [emerg] "server" directive
+is not allowed here»: директива server допустима только внутри блока
+http, которого во фрагменте нет.
+
+ПРОВЕРОК ДВЕ, И ЭТО НЕ ДУБЛИРОВАНИЕ. Первая идёт до раскладки
+наших файлов: если конфигурация была сломана раньше, виноват
+не плейбук, и знать об этом надо до правок. Вторая — после
+раскладки: она видит и наш фрагмент, и остальные файлы nginx.
+Устроены обе одинаково: команда nginx -t и разбор кода возврата.
+
+ПОЧЕМУ ИМЕННО ТАК: у многофайловых конфигураций проверка идёт
+отдельной задачей nginx -t после раскладки — тогда проверяется вся
+конфигурация, вместе с нашим фрагментом. Если проверка не прошла,
+плейбук убирает файлы, которые сам добавил, проверяет конфигурацию
+ещё раз (она должна снова проходить) и только после этого
+останавливает прогон с сообщением. Файл на узле остаётся прежним,
+служба продолжает работать, а в отчёте видна причина. Для одного
+файла validate по-прежнему лучший инструмент: sshd -t -f %s (шаг 6).
 
 =========================================================================
 ШАГ 5. SSHD_CONFIG: ЦИКЛ ПО СЛОВАРЮ ПАРАМЕТРОВ
@@ -408,8 +482,8 @@ server допустима только внутри блока http. Поэто�
   # к подсистеме sftp различаются семейством ОС.
   # Здесь Jinja2 работает не в шаблоне, а в переменной.
   sshd_config_path: "/etc/ssh/sshd_config"
-  sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
-  sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_os_family == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
+  sshd_service: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+  sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_facts['os_family'] == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
 
   # Если переменная определена, шаблон добавит строку AllowUsers.
   sshd_allow_users:
@@ -514,22 +588,22 @@ drop-in файлом выше по тексту.
   {{ ansible_managed }}
   =========================================================================
     {{ inventory_hostname | upper }} — учебный стенд курса Ansible
-    {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})
+    {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} ({{ ansible_facts['os_family'] }})
   =========================================================================
 
-  Машина:      {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
-  Ядер:        {{ ansible_processor_vcpus }}
-  Память, МБ:  {{ ansible_memtotal_mb }}
+  Машина:      {{ inventory_hostname }} ({{ ansible_facts['default_ipv4']['address'] }})
+  Ядер:        {{ ansible_facts['processor_vcpus'] }}
+  Память, МБ:  {{ ansible_facts['memtotal_mb'] }}
   Группы:      {{ group_names | sort | join(', ') }}
 
   Адреса машин группы linux:
   {% for host in groups['linux'] %}
-  {% set address = hostvars[host]['ansible_default_ipv4']['address'] | default('адрес неизвестен') %}
-  {% set family = hostvars[host]['ansible_os_family'] | default('семейство неизвестно') %}
+  {% set address = hostvars[host]['ansible_facts']['default_ipv4']['address'] | default('адрес неизвестен') %}
+  {% set family = hostvars[host]['ansible_facts']['os_family'] | default('семейство неизвестно') %}
     {{ '%-6s' | format(host) }} {{ '%-16s' | format(address) }} {{ family }}
   {% endfor %}
   Всего машин: {{ groups['linux'] | length }} ({% for host in groups['linux'] %}{{ host }}{{ ', ' if not loop.last else '' }}{% endfor %})
-  Владелец:    {{ ansible_local.site.general.owner | default('не назначен') }}
+  Владелец:    {{ ansible_facts['ansible_local']['site']['general']['owner'] | default('не назначен') }}
   {% if motd_notice is defined %}
 
   Объявление:
@@ -659,7 +733,7 @@ is defined плюс default закрывает случай, когда факт
 
 Содержимое files/12_jinja_configs/templates/chrony.conf.j2:
   # {{ ansible_managed }}
-  # Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_os_family | lower }}.
+  # Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_facts['os_family'] | lower }}.
 
   {% for pool in chrony_pools %}
   pool {{ pool }} iburst
@@ -765,7 +839,7 @@ is defined плюс default закрывает случай, когда факт
             - "length:          {{ nginx_backends | length }}"
             - "combine:         {{ site_defaults | combine(site_override) | to_nice_json }}"
             - "default:         {{ nginx_undefined_var | default('значение по умолчанию') }}"
-            - "upper + lower:   {{ ansible_os_family | upper }} / {{ ansible_os_family | lower }}"
+            - "upper + lower:   {{ ansible_facts['os_family'] | upper }} / {{ ansible_facts['os_family'] | lower }}"
 
       - name: "Фильтры над строками и путями"
         ansible.builtin.debug:
@@ -808,7 +882,7 @@ ansible.builtin.stat и его результат: stat.stat.isreg.
 
 Содержимое files/12_jinja_configs/templates/notice.j2:
   {#- Шаблон рендерит lookup('template', ...) на управляющей машине. -#}
-  Объявление для {{ inventory_hostname }} ({{ ansible_os_family }})
+  Объявление для {{ inventory_hostname }} ({{ ansible_facts['os_family'] }})
   Стенд: {{ site_title | default('учебный стенд курса Ansible') }}
   Источник: {{ lab_notice_source | basename }}
   Строк в тексте: {{ lab_notice_text | default('') | length }}
@@ -879,9 +953,11 @@ Ansible? Содержимое files/12_jinja_configs/05_slurp.yml:
   # Практика 12, шаг 13: прочитать файл с узла и сравнить с шаблоном.
   # Запуск: ansible-playbook 05_slurp.yml
   # Плейбук ничего не меняет: changed=0 должен быть и в первый раз.
+  # Группа та же, что в 03_motd.yml: файл разворачивался на всех
+  # машинах группы linux, значит и сверять его надо на всех.
 
   - name: "Прочитать /etc/motd с узла и сравнить с шаблоном"
-    hosts: web1
+    hosts: linux
     become: true
     tasks:
       - name: "Прочитать файл с узла модулем slurp"
@@ -913,13 +989,25 @@ slurp читает файл на узле и отдаёт его в base64, а b
 контрольными суммами, если хотите понять, чем они отличаются: md5
 скажет «разные», но не покажет где.
 
-ПРОВЕРКА: прогоните плейбук, испортьте файл на узле и прогоните снова:
+Плейбук идёт по той же группе linux, что и 03_motd.yml: файл
+разворачивался на всех машинах группы, значит и сверять его надо
+на всех, а не на одной. Проверки внутри play осмысленны на каждой
+из трёх машин: размер и первая строка берутся из прочитанного файла,
+а motd_rendered собирается шаблоном motd.j2 для текущей машины —
+из её фактов и её списка машин группы linux. Настраиваемый факт
+шаблон берёт через ansible_facts['ansible_local'] с фильтром default:
+если файла факта на машине нет, строка «Владелец» скажет «не назначен»,
+и сверка из-за этого не сломается.
+
+ПРОВЕРКА: прогоните плейбук, испортьте файл на одной из машин
+и прогоните снова:
   ansible-playbook 05_slurp.yml
   ansible web1 -b -m ansible.builtin.command \
       -a "sed -i '1i КТО-ТО ПРАВИЛ ЭТОТ ФАЙЛ' /etc/motd"
   ansible-playbook 05_slurp.yml
 
-Первый прогон даёт changed=0, второй падает на assert: конфигурацией
+Первый прогон даёт changed=0 на всех трёх машинах; второй падает
+на assert у web1, а web2 и db1 по-прежнему отвечают ok: файлом
 на узле управляет Ansible, а не человек.
 
 =========================================================================
@@ -928,7 +1016,7 @@ slurp читает файл на узле и отдаёт его в base64, а b
 
 В WHEN — БЕЗ ДВОЙНЫХ ФИГУРНЫХ СКОБОК:
   when: nginx_backends | selectattr('enabled') | list | length > 0
-  when: ansible_os_family == "Debian" and nginx_port | int == 8080
+  when: ansible_facts['os_family'] == "Debian" and nginx_port | int == 8080
 
 В ИМЕНИ ЗАДАЧИ — МОЖНО И НУЖНО: имя печатается в отчёте, и по нему
 потом ищут, что сломалось:
@@ -947,7 +1035,7 @@ slurp читает файл на узле и отдаёт его в base64, а b
 
 В VARS — КАК АЛЬТЕРНАТИВА ВЕТВЛЕНИЮ:
   vars:
-    sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    sshd_service: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
 
 ЧЕГО НЕ ДЕЛАТЬ: не переносите в шаблон решения о том, что делать:
 шаблон формирует текст, а выбор «ставить пакет или не ставить»
@@ -1014,7 +1102,8 @@ slurp читает файл на узле и отдаёт его в base64, а b
 переменная определена для другой группы. Порядок проверки:
   1. Сверить vars_files упавшего play.
   2. Спросить Ansible: ansible web1 -m ansible.builtin.debug -a "var=nginx_root"
-  3. Убедиться, что play идёт по нужной машине: здесь hosts: web1.
+  3. Убедиться, что play идёт по нужной машине: переменные nginx.yml
+     подключены в 01_nginx.yml, а его hosts — web1.
 
 ПРОБЛЕМА: jinja2.exceptions.TemplateSyntaxError: unexpected '}'
 
@@ -1081,9 +1170,11 @@ slurp читает файл на узле и отдаёт его в base64, а b
   3. Проверить конфигурацию целиком: nginx -t на узле.
 
 nginx перезапускается только после успешной проверки: если задача
-шаблона прошла, а новая строка оказалась неверной, следующая задача
-nginx -t упадёт и обработчик не выполнится. Откат — вернуть файл
-из копии, которую оставил backup: true.
+шаблона прошла, а новая строка оказалась неверной, задача nginx -t
+покажет это до вызова обработчика. Плейбук уберёт добавленные файлы,
+проверит конфигурацию повторно и остановит прогон — служба продолжит
+работать на прежней конфигурации. Копию прежнего файла, которую
+оставил backup: true, удобно взять, если файл правили руками.
 
 ПРОБЛЕМА: nginx: [emerg] unknown "web1" variable
 
@@ -1156,13 +1247,17 @@ notify в одной задаче — ошибка YAML: остаётся пос
    не меняет:
      ansible-playbook 05_slurp.yml
      ok: [web1] — «Файл на узле совпадает с шаблоном motd.j2.»
+     ok: [web2] — «Файл на узле совпадает с шаблоном motd.j2.»
+     ok: [db1] — «Файл на узле совпадает с шаблоном motd.j2.»
      ansible-playbook 01_nginx.yml --diff | tail -2
-     web1 : ok=8 changed=0 unreachable=0 failed=0 skipped=2
+     web1 : ok=10 changed=0 unreachable=0 failed=0 skipped=5
 
-   В play десять задач, две из них пропущены: play идёт по web1,
-   а ветка RedHat — не для неё (установка пакета через dnf и снятие
-   /etc/nginx/conf.d/default.conf). Остальные восемь задач дают ok,
-   и только обработчик перезапуска в первом прогоне добавлял changed.
+   В отчёте шестнадцать строк: сбор фактов и пятнадцать задач.
+   Пять строк пропущены: две задачи ветки RedHat (установка пакета
+   через dnf и снятие /etc/nginx/conf.d/default.conf) и три задачи
+   блока отката — обе проверки nginx -t прошли, откатывать нечего.
+   Остальные десять дают ok, changed=0: повторный прогон ничего не
+   меняет, а обработчик перезапуска добавлял changed только в первом.
 
 =========================================================================
 ЧТО ДАЛЬШЕ

@@ -22,7 +22,7 @@ argument_specs:
       - Ставит и включает веб-сервер (apache2 на Debian, httpd на RedHat),
         раскладывает страницу сайта из шаблона index.j2 и оформление
         style.css, открывает порт в межсетевом экране (ufw или firewalld).
-      - Ветка выбирается по факту ansible_os_family, а не по имени машины.
+      - Ветка выбирается по факту ansible_facts['os_family'], а не по имени машины.
         Нужны коллекции ansible.posix и community.general и права root.
     author:
       - engineer

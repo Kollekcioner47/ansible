@@ -3,6 +3,10 @@
 # find: patterns, age, size, recurse, register и обработка найденного.
 # Плейбук удаляет только старые копии конфигураций (*.bak, *~),
 # большие журналы он показывает, но не трогает.
+# У age и size плюс подразумевается по умолчанию: число без знака —
+# это «не меньше указанного» (старше, больше). Минус меняет
+# направление на «не больше» (новее, меньше).
+# С плюсом модуль падает: failed to process age (size).
 # Учебная заготовка включается переменной find_make_fixtures:
 # прогон с -e find_make_fixtures=false показывает поведение
 # на настоящем парке и обязан дать changed=0.
@@ -32,7 +36,7 @@
       ansible.builtin.find:
         paths: /etc
         patterns: "{{ backup_patterns }}"
-        age: +7d
+        age: 7d
         recurse: true
         file_type: file
       register: old_backups
@@ -51,16 +55,16 @@
       loop_control:
         label: "{{ item.path }}"
 
-    - name: Найти журналы больше 10 МБ старше недели
+    - name: "Найти за последнюю неделю журналы больше 10 МБ"
       ansible.builtin.find:
         paths: /var/log
         patterns: '*.log'
-        age: +1w
-        size: '+10M'
+        age: -1w
+        size: 10M
         recurse: true
         file_type: file
       register: big_logs
 
     - name: Показать большие журналы, ничего не удаляя
       ansible.builtin.debug:
-        msg: "Журналов больше 10 МБ старше недели: {{ big_logs.matched }}."
+        msg: "Журналов больше 10 МБ за последнюю неделю: {{ big_logs.matched }}."

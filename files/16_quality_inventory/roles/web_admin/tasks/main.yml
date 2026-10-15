@@ -2,24 +2,24 @@
 # Задачи роли web_admin: веб-сервер и учебная страница сайта.
 # Порядок повторяет плейбук практики 7: пакет, страница, служба,
 # межсетевой экран. Имена пакетов, служб и межсетевых экранов
-# берутся из vars/main.yml по факту ansible_os_family.
+# берутся из vars/main.yml по факту ansible_facts['os_family'].
 
 - name: Проверить, что семейство ОС поддерживается ролью
   ansible.builtin.assert:
     that:
-      - ansible_os_family in web_admin_supported_families
+      - ansible_facts['os_family'] in web_admin_supported_families
     fail_msg: >-
       Роль web_admin не умеет работать на семействе
-      {{ ansible_os_family }}: поддержаны
+      {{ ansible_facts['os_family'] }}: поддержаны
       {{ web_admin_supported_families | join(', ') }}.
-    success_msg: "Семейство {{ ansible_os_family }} поддержано"
+    success_msg: "Семейство {{ ansible_facts['os_family'] }} поддержано"
     quiet: true
 
 - name: Взять имена пакетов и служб своего семейства ОС
   ansible.builtin.set_fact:
-    web_admin_package: "{{ web_admin_family_settings[ansible_os_family].package }}"
-    web_admin_service: "{{ web_admin_family_settings[ansible_os_family].service }}"
-    web_admin_firewall_package: "{{ web_admin_family_settings[ansible_os_family].firewall_package }}"
+    web_admin_package: "{{ web_admin_family_settings[ansible_facts['os_family']].package }}"
+    web_admin_service: "{{ web_admin_family_settings[ansible_facts['os_family']].service }}"
+    web_admin_firewall_package: "{{ web_admin_family_settings[ansible_facts['os_family']].firewall_package }}"
 
 - name: Установить веб-сервер
   ansible.builtin.package:
@@ -85,7 +85,7 @@
         policy: deny
         direction: incoming
 
-  when: ansible_os_family == "Debian"
+  when: ansible_facts['os_family'] == "Debian"
 
 - name: Открыть порт сайта на Rocky Linux
   block:
@@ -102,4 +102,4 @@
         immediate: true
         state: enabled
 
-  when: ansible_os_family == "RedHat"
+  when: ansible_facts['os_family'] == "RedHat"

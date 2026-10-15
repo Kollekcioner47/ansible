@@ -32,23 +32,23 @@
 
     - name: Собрать адреса всего парка из hostvars
       ansible.builtin.debug:
-        msg: "{{ item }}: {{ hostvars[item]['ansible_default_ipv4']['address'] | default('фактов нет') }}"
+        msg: "{{ item }}: {{ hostvars[item]['ansible_facts']['default_ipv4']['address'] | default('фактов нет') }}"
       loop: "{{ groups['linux'] }}"
 
     - name: Показать адрес web2, глядя с этой машины
       ansible.builtin.debug:
-        msg: "web2: {{ hostvars['web2']['ansible_default_ipv4']['address'] }}"
+        msg: "web2: {{ hostvars['web2']['ansible_facts']['default_ipv4']['address'] }}"
 
     - name: Показать фильтры и тесты Jinja2 на данных инвентаря
       ansible.builtin.debug:
         msg:
-          - "upper: {{ ansible_os_family | upper }}"
+          - "upper: {{ ansible_facts['os_family'] | upper }}"
           - "length: {{ groups['linux'] | length }}"
           - "join: {{ groups['linux'] | join(' + ') }}"
           - "map: {{ groups['linux'] | map('upper') | join(', ') }}"
           - "to_nice_json: {{ groups['linux'] | to_nice_json }}"
           - "b64encode: {{ 'engineer' | b64encode }}"
           - "default: {{ lab_owner | default('не назначен') }}"
-          - "is defined: {{ ansible_local.site.general.owner is defined }}"
-          - "is not none: {{ ansible_processor_vcpus is not none }}"
+          - "is defined: {{ ansible_facts['ansible_local']['site']['general']['owner'] is defined }}"
+          - "is not none: {{ ansible_facts['processor_vcpus'] is not none }}"
           - "is file (на управляющей машине): {{ '/etc/hosts' is file }}"

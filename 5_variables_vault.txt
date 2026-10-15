@@ -916,7 +916,7 @@ vasr: secret вместо var: secret. Для YAML такой файл прав�
   ansible-doc -s ansible.builtin.debug
 
 ИСПРАВЛЕНО: там же встречалась опечатка ansible_distibution вместо
-ansible_distribution — лишняя буква в имени факта, и симптом снова
+ansible_facts['distribution'] — лишняя буква в имени факта, и симптом снова
 «переменная не определена». Смотреть факты нужно командой, а не
 по памяти:
 

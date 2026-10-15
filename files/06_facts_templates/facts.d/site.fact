@@ -1,6 +1,6 @@
 # Настраиваемый факт стенда курса. Формат INI.
 # Лежит на узле в /etc/ansible/facts.d/ и читается модулем setup.
-# Доступ к значениям: ansible_local.site.general.<ключ>
+# Доступ к значениям: ansible_facts['ansible_local']['site']['general']['<ключ>']
 # (имя файла, затем имя секции, затем имя ключа).
 
 [general]

@@ -5,7 +5,7 @@
 ЭТО СКАЗАНО ПРЯМО, ЧТОБЫ ШПАРГАЛКА НЕ ВЫДАВАЛА ЛИШНЕГО ЗА КУРС.
 Стенд: control 10.0.2.5, web1 10.0.2.11, web2 10.0.2.12, db1 10.0.2.13,
 пользователь engineer, каталог /home/engineer/ansible-lab,
-ansible-core 2.19.
+ansible-core 2.19.0 в примерах (курс проверен и на 2.21).
 
 =========================================================================
 1. УСТАНОВКА И ОКРУЖЕНИЕ
@@ -182,8 +182,8 @@ include_vars, set_fact, register, -e и --extra-vars (например
   - name: Проверить, что семейство ОС поддерживается ролью
     ansible.builtin.assert:
       that:
-        - ansible_os_family in web_admin_supported_families
-      fail_msg: "Семейство {{ ansible_os_family }} не поддержано"
+        - ansible_facts['os_family'] in web_admin_supported_families
+      fail_msg: "Семейство {{ ansible_facts['os_family'] }} не поддержано"
       quiet: true
 
 =========================================================================
@@ -197,13 +197,15 @@ include_vars, set_fact, register, -e и --extra-vars (например
       owner: root
       mode: "0644"
       backup: true
-      validate: "nginx -t"
       trim_blocks: true
       lstrip_blocks: true
   * src ищется в каталоге templates рядом с плейбуком или ролью;
   * mode пишется строкой в кавычках: "0644", "0755";
   * backup: true оставляет копию прежнего файла с отметкой времени;
-  * validate — проверка над временным файлом до подмены, место обозначается %s: sshd -t -f %s, visudo -cf %s; у nginx без %s;
+  * validate — проверка временного файла до подмены; %s в команде
+    обязателен, иначе задача падает с «validate must contain %s»:
+    sshd -t -f %s, visudo -cf %s. Многофайловым конфигурациям (nginx)
+    validate не подходит: там проверка идёт отдельной задачей;
   * trim_blocks убирает перевод строки после {% %}, lstrip_blocks —
     пробелы перед блоком в начале строки.
 ФАКТЫ собирает модуль setup:
@@ -214,12 +216,20 @@ include_vars, set_fact, register, -e и --extra-vars (например
 filter — что ПОКАЗАТЬ из уже собранного (работу не ускоряет),
 gather_subset — что СОБИРАТЬ; знак ! значит «не собирать»; наборы:
 distribution, network, hardware, virtual, local, processor, mounts.
+ФАКТЫ В ПЛЕЙБУКЕ: короткие имена вида ansible_os_family объявлены
+устаревшими — предупреждение INJECT_FACTS_AS_VARS, удаление в
+ansible-core 2.24; настройка [defaults] inject_facts_as_vars.
+В плейбуках и шаблонах используется ansible_facts['os_family'].
+В ad-hoc командах setup фильтр пишется по-старому:
+  ansible web1 -m ansible.builtin.setup -a "filter=ansible_os_family"
+Это шаблон имени факта в выводе модуля, он не меняется.
 Факты курса: os_family (Debian или RedHat), distribution,
 distribution_version, hostname, processor_vcpus, memtotal_mb,
-default_ipv4.address; запись: ansible_facts['os_family'] или короткая.
+default_ipv4.address; запись через словарь: ansible_facts['os_family'],
+ansible_facts['default_ipv4']['address'].
 НАСТРАИВАЕМЫЕ ФАКТЫ — файлы INI или JSON в /etc/ansible/facts.d:
-  {{ ansible_local.site.general.owner }}
-  {{ ansible_local.hardware.cpu_cores }}
+  {{ ansible_facts['ansible_local']['site']['general']['owner'] }}
+  {{ ansible_facts['ansible_local']['hardware']['cpu_cores'] }}
 Набор фактов собирается в начале play: файл факта кладут первым play.
 Волшебные переменные: inventory_hostname, ansible_play_hosts, hostvars,
 groups, group_names, ansible_check_mode.

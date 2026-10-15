@@ -12,7 +12,8 @@
 Блок устроен одинаково: точный текст ошибки, причина и порядок проверки
 с командами. Текст ошибки приведён как есть, на английском: искать
 нужно именно его. Пометка «Практика N» указывает, где ошибка разобрана
-полностью. Курс собран на ansible-core 2.19: в другой версии текст
+полностью. Примеры курса сняты на ansible-core 2.19.0, работа проверена
+и на 2.21: в другой версии текст
 ошибки может отличаться, а причина и проверки — те же.
 
 
@@ -201,7 +202,7 @@ YAML не считает повторяющийся ключ ошибкой: о�
 предупреждение Consider using the ansible.builtin.apt module rather
 than running 'apt': это подсказка заменить shell модулем. Практики 3 и 15.
 
-  ansible-doc -l | grep -i copy ; ansible-galaxy collection list
+  ansible-doc ansible.builtin.copy ; ansible-galaxy collection list
   ansible-doc -s ansible.builtin.apt
 
 
@@ -301,11 +302,11 @@ loop и на своём ли он уровне; не обращается ли �
   grep -rn 'web_port' ~/ansible-lab --include='*.yml'
   ansible web1 -m ansible.builtin.debug -a "var=web_port"
 
-ПРОБЛЕМА: факт не появился: ansible_local пуст или путь слишком короткий
+ПРОБЛЕМА: факт не появился: ansible_facts['ansible_local'] пуст или путь слишком короткий
 
 Файлов .fact не найдено: проверьте каталог /etc/ansible/facts.d,
 расширение .fact, секцию [general] в INI и сбор фактов в этом play.
-Для INI путь на уровень длиннее: ansible_local.site.general.owner. Практика 6.
+Для INI путь на уровень длиннее: ansible_facts['ansible_local']['site']['general']['owner']. Практика 6.
 
   ssh engineer@web1 'ls -l /etc/ansible/facts.d/'
   ansible web1 -m ansible.builtin.setup -a "filter=ansible_local"
@@ -317,6 +318,33 @@ loop и на своём ли он уровне; не обращается ли �
 
   grep -rn 'web_port' ~/ansible-lab --include='*.yml'
   ansible web1 -m ansible.builtin.debug -a "var=web_port"
+
+ПРОБЛЕМА: [DEPRECATION WARNING]: INJECT_FACTS_AS_VARS
+
+  [DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+
+Причина: плейбук или роль берёт факт по короткому имени
+(ansible_os_family). В ansible-core 2.24 такие имена перестанут
+подставляться — значение останется только в словаре ansible_facts.
+Порядок: найти короткие имена, заменить на форму через словарь,
+проверить прогоном. Практика 6.
+
+  grep -rn "ansible_os_family\|ansible_distribution\|ansible_hostname" tasks/ roles/ templates/
+
+Замена: ansible_os_family → ansible_facts['os_family'],
+ansible_hostname → ansible_facts['hostname'], а вложенный факт
+ansible_default_ipv4.address → ansible_facts['default_ipv4']['address'].
+
+Отдельно: чужие роли из Galaxy часто ещё используют короткие имена.
+Если предупреждение приходит из роли, быстрее обновить роль до новой
+версии, чем править её у себя. Источник предупреждения виден в нём самом:
+строка Origin даёт файл и номер строки. Действующее значение настройки
+показывает команда:
+
+  ansible-config dump | grep -i INJECT_FACTS
+
+Если в выводе рядом стоит default, настройка не задана — именно это и
+включает предупреждение; задайте её явно. Практика 6, шаг 13.
 
 
 =========================================================================

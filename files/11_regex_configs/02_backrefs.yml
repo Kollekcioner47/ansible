@@ -2,13 +2,15 @@
 # 02_backrefs.yml — шаг 9 практики 11.
 # backrefs: true — в line работают группы выражения (\1, \2),
 # а при несовпадении файл не меняется: строка не дописывается.
+# Факты собираются: обработчику нужно семейство ОС, потому что служба
+# SSH называется по-разному — ssh на Debian и sshd на RedHat.
 #   ansible-playbook 02_backrefs.yml
 # Второй прогон обязан дать changed=0.
 
 - name: Править строки, сохраняя то, что в них уже написано
   hosts: web
   become: true
-  gather_facts: false
+  gather_facts: true
   vars:
     sshd_dropin: /etc/ssh/sshd_config.d/20-sshd-hardening.conf
   tasks:
@@ -39,5 +41,5 @@
   handlers:
     - name: Перезапустить службу SSH
       ansible.builtin.service:
-        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
         state: restarted

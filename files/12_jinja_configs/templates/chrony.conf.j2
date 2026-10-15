@@ -1,5 +1,5 @@
 # {{ ansible_managed }}
-# Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_os_family | lower }}.
+# Файл собран из шаблона chrony.conf.j2 для семейства {{ ansible_facts['os_family'] | lower }}.
 
 {% for pool in chrony_pools %}
 pool {{ pool }} iburst

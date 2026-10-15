@@ -27,8 +27,8 @@ sshd_params:
 # к подсистеме sftp различаются семейством ОС.
 # Здесь Jinja2 работает не в шаблоне, а в переменной.
 sshd_config_path: "/etc/ssh/sshd_config"
-sshd_service: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
-sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_os_family == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
+sshd_service: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+sshd_sftp_subsystem: "{{ '/usr/lib/openssh/sftp-server' if ansible_facts['os_family'] == 'Debian' else '/usr/libexec/openssh/sftp-server' }}"
 
 # Если переменная определена, шаблон добавит строку AllowUsers.
 sshd_allow_users:

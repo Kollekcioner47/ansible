@@ -10,7 +10,7 @@
   pre_tasks:
     - name: Прочитать переменные для семейства ОС
       ansible.builtin.include_vars:
-        file: "vars/{{ ansible_os_family }}.yml"
+        file: "vars/{{ ansible_facts['os_family'] }}.yml"
 
   tasks:
     - name: Поставить пакет межсетевого экрана
@@ -25,7 +25,7 @@
         enabled: true
 
     - name: Открыть порты на Ubuntu (ufw)
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
       block:
         - name: Разрешить 22/tcp, иначе следующий прогон не подключится
           community.general.ufw:
@@ -46,7 +46,7 @@
             direction: incoming
 
     - name: Открыть службу http на Rocky (firewalld)
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
       block:
         - name: Разрешить службу http в зоне public
           ansible.posix.firewalld:

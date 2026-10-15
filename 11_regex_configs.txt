@@ -269,23 +269,34 @@ files/11_regex_configs/conf/resolv.conf.in:
 
 Скопируйте образцы в /tmp (cp conf/chrony.conf.in /tmp/chrony.conf
 и так далее для двух других файлов) и проверьте выражения командой
-grep -nE. Эти команды ничего на узлах не меняют:
+grep -nP. Эти команды ничего на узлах не меняют:
 
-  grep -nE '^server [0-9]\.centos\.pool\.ntp\.org iburst$' /tmp/chrony.conf
+  grep -nP '^server [0-9]\.centos\.pool\.ntp\.org iburst$' /tmp/chrony.conf
   7:server 0.centos.pool.ntp.org iburst
   8:server 1.centos.pool.ntp.org iburst
 
-  grep -nE '^nameserver 8\.8\.[0-9]+\.[0-9]+$' /tmp/resolv.conf
+  grep -nP '^nameserver 8\.8\.[0-9]+\.[0-9]+$' /tmp/resolv.conf
   10:nameserver 8.8.8.8
   11:nameserver 8.8.4.4
 
-  grep -nE '^#?\s*PermitRootLogin\s' /tmp/sshd_config
-  7:#PermitRootLogin prohibit-password
+  grep -nP '^#?\s*MaxAuthTries\s' /tmp/sshd_config
+  9:#MaxAuthTries 6
 
-ВАЖНО: у grep -E свой диалект: \s он понимает, а \d — нет, вместо
-цифры он прочитает букву d. Ansible обрабатывает выражения модулем re,
-и там \d работает как обычно: проверяя на копии, заменяйте \d на [0-9].
-Модули правки молчат при промахе: replace не находит образец и ничего
+  grep -nP '^server (\d)\.centos\.pool\.ntp\.org iburst$' /tmp/chrony.conf
+  7:server 0.centos.pool.ntp.org iburst
+  8:server 1.centos.pool.ntp.org iburst
+
+ПОЧЕМУ -P, А НЕ -E: -E включает POSIX-диалект (ERE), а выражения курса
+написаны в синтаксисе PCRE — том же, что понимает Python re. В ERE нет
+ни \s, ни \S, ни \d, ни \w, ни ленивых квантификаторов: \d там означает
+не «цифра», а буква d, и выражение тихо находит не то. -P (Perl
+Compatible Regular Expressions) разбирает выражение так же, как re.
+GNU grep с ключом -P есть и на Ubuntu, и на Rocky Linux, поэтому одну
+и ту же команду можно повторять на любом узле стенда.
+
+ВАЖНО: показывайте выражения именно с -nP: на -E часть их просто
+не совпадёт, и вы решите, что выражение плохое, хотя его не понял grep.
+Модули правки при промахе молчат: replace не находит образец и ничего
 не меняет, lineinfile не находит строку и дописывает новую.
 
 
@@ -432,7 +443,7 @@ STATE: ABSENT. При удалении строки параметр line не �
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Два решения здесь требуют объяснения. force: false у задачи copy —
@@ -548,13 +559,15 @@ backrefs: true меняет поведение модуля в двух мест
   # 02_backrefs.yml — шаг 9 практики 11.
   # backrefs: true — в line работают группы выражения (\1, \2),
   # а при несовпадении файл не меняется: строка не дописывается.
+  # Факты собираются: обработчику нужно семейство ОС, потому что служба
+  # SSH называется по-разному — ssh на Debian и sshd на RedHat.
   #   ansible-playbook 02_backrefs.yml
   # Второй прогон обязан дать changed=0.
 
   - name: Править строки, сохраняя то, что в них уже написано
     hosts: web
     become: true
-    gather_facts: false
+    gather_facts: true
     vars:
       sshd_dropin: /etc/ssh/sshd_config.d/20-sshd-hardening.conf
     tasks:
@@ -585,12 +598,24 @@ backrefs: true меняет поведение модуля в двух мест
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Запуск: задача с совпадением даёт changed, задача с промахом — ok,
 и в выводе видно changed=False: если строка обязана появиться, backrefs
 не подходит.
+
+ПОЧЕМУ ЗДЕСЬ СОБИРАЮТСЯ ФАКТЫ: у плейбука стоит gather_facts: true,
+и это не случайность. Обработчик «Перезапустить службу SSH» берёт
+ansible_facts['os_family'], чтобы выбрать имя службы: на Debian она
+называется ssh, на RedHat — sshd. При gather_facts: false такой задачи
+нет, ansible_facts остаётся пустым, и плейбук падает на подстановке
+имени службы. Проверка идёт по семейству ОС, поэтому плейбук работает
+и на Ubuntu (web1, web2), и на Rocky Linux. В соседних плейбуках
+практики факты собираются ровно там, где нужны: 01_regexp.yml
+и 06_validate.yml — у них тот же обработчик; 03_blockinfile_markers.yml,
+04_replace.yml и 05_find_age.yml фактов не используют и работают
+с gather_facts: false, не тратя время на их сбор.
 
 ЗАЧЕМ ЭТО В РАБОТЕ: backrefs — способ переписать существующую строку,
 ничего не потеряв: у параметра меняют только значение, а имя, отступы
@@ -792,7 +817,7 @@ replace не задан, поэтому найденное исчезает.
 
 ПРОВЕРКА: посмотрите на файл на узле, а не на отчёт:
 
-  ssh engineer@db1 'grep -n -E "^(server|makestep) " /etc/chrony.conf'
+  ssh engineer@db1 'grep -nP "^(server|makestep) " /etc/chrony.conf'
   7:server 0.ru.pool.ntp.org iburst
   8:server 1.ru.pool.ntp.org iburst
   10:makestep 0.1 3
@@ -827,10 +852,22 @@ find ищет объекты по условиям и возвращает сп�
   patterns   образцы имён вроде '*.bak' — это маски оболочки,
              а не регулярные выражения; use_regex: true включает
              в patterns регулярные выражения;
-  age        отбор по возрасту: +7d старше недели, -1w младше недели;
-  size       отбор по размеру: +10M больше 10 МБ;
+  age        отбор по возрасту: 7d — файлы старше недели, -1w — файлы,
+             изменённые за последнюю неделю; единицы s, m, h, d или w
+             пишутся вплотную к числу;
+  size       отбор по размеру: 10M — файлы больше 10 МБ, -10M — меньше;
+             единицы b, k, m, g или t;
   recurse    true — искать и во вложенных каталогах; file_type задаёт,
              что искать: file, directory, link или any.
+
+ЗНАК У AGE И SIZE: ПЛЮС ПОДРАЗУМЕВАЕТСЯ. Число без знака означает
+«не меньше указанного»: age: 7d — файл старше недели, size: 10M —
+файл больше 10 МБ. Плюс здесь не пишут — он подразумевается по
+умолчанию, а модуль разбирает только число с необязательным минусом:
+find с age: +7d падает с failed to process age, а с size: '+10M' —
+с failed to process size. Минус меняет направление на «не больше
+указанного»: age: -1w — файлы, изменённые за последнюю неделю,
+size: -10M — файлы меньше 10 МБ.
 
 В register попадают поля matched (сколько нашлось), files (список
 с путями) и examined (сколько просмотрено). Задача «удалить старое»
@@ -841,7 +878,7 @@ find ищет объекты по условиям и возвращает сп�
     ansible.builtin.find:
       paths: /etc
       patterns: "{{ backup_patterns }}"
-      age: +7d
+      age: 7d
       recurse: true
       file_type: file
     register: old_backups
@@ -854,16 +891,22 @@ find ищет объекты по условиям и возвращает сп�
     loop_control:
       label: "{{ item.path }}"
 
-  - name: Найти журналы больше 10 МБ старше недели
+  - name: "Найти за последнюю неделю журналы больше 10 МБ"
     ansible.builtin.find:
       paths: /var/log
       patterns: '*.log'
-      age: +1w
-      size: '+10M'
+      age: -1w
+      size: 10M
       recurse: true
       file_type: file
     register: big_logs
 
+Первая задача берёт из /etc копии старше недели: 7d — это возраст
+«не меньше недели», и под условие попадают копии, которые и готовит
+учебная заготовка. Вторая задача показана с минусом: age: -1w — файлы
+«не старше недели», то есть изменённые за последнюю неделю, а size: 10M
+добавляет условие «не меньше 10 МБ». Так видно, что минус не украшение,
+а второй режим отбора, и в одном плейбуке встречаются оба направления.
 Большие журналы плейбук только показывает: удаление журналов — решение
 администратора, а не побочный эффект уборки мусора. backup_patterns
 ('*.bak', '*~') и find_make_fixtures заданы в vars плейбука: без
@@ -935,7 +978,7 @@ Ansible не пишет изменённый текст сразу на мест
     handlers:
       - name: Перезапустить службу SSH
         ansible.builtin.service:
-          name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+          name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
           state: restarted
 
 Запуск. Первая задача падает нарочно, и текст этой ошибки разобран
@@ -1069,7 +1112,7 @@ escape-последовательность: \n, \t и \\ он понимает,
 1. На web1 и web2 настройки sshd действуют (проверка идёт командой
    sshd -T, а не чтением файла):
 
-     ssh engineer@web1 'sudo sshd -T | grep -E "permitrootlogin|passwordauthentication|maxauthtries"'
+     ssh engineer@web1 'sudo sshd -T | grep -P "permitrootlogin|passwordauthentication|maxauthtries"'
      permitrootlogin no
      passwordauthentication no
      maxauthtries 3
