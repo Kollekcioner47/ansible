@@ -1,0 +1,984 @@
+Приложение 4. Windows: шаблоны плейбуков.
+
+ЭТО ПРИЛОЖЕНИЕ СОБРАНО ИЗ ШАБЛОНОВ, КОТОРЫЕ МОЖНО БРАТЬ КАК ЕСТЬ.
+Курс целиком про Linux: в стенде четыре машины Linux, контроллера
+домена нет, проверить Windows-задачи не на чем. Поэтому здесь
+не практика, а набор заготовок: инвентарь, подключение и короткие
+плейбуки по типовым задачам. Windows мы даём обзорно — взять шаблон
+и применить на своей машине да, полный курс администрирования
+Windows нет. За подготовкой узла идите в приложение 3, шаги 2 и 3:
+без настроенного WinRM ни один шаблон ниже не заработает, и это
+не ошибка плейбука.
+=========================================================================
+ЧЕМ WINDOWS ОТЛИЧАЕТСЯ ОТ LINUX В ANSIBLE
+=========================================================================
+
+  * ТРАНСПОРТ. Вместо SSH — WinRM. Порты 5985 и 5986 вместо 22,
+    другие требования к узлу, другая диагностика.
+  * ПРИВИЛЕГИИ. Вместо `sudo` — `become` с методом `runas` и служба
+    Secondary Logon. Механика та же (практика 9), детали другие.
+  * ПРАВА. Вместо `mode: "0644"` — списки управления доступом (ACL).
+    Параметра `mode` в Windows-модулях нет, права ставит `win_acl`.
+  * ПРОВЕРКА СВЯЗИ. `ansible.builtin.ping` здесь не работает:
+    нужен `ansible.windows.win_ping`.
+  * ПУТИ. `C:\Program Files\App`, разделитель — обратный слеш.
+    В YAML такой путь берут в одинарные кавычки.
+  * КОЛЛЕКЦИИ. Модули Windows живут не в ядре: `ansible.windows`,
+    `community.windows`, `chocolatey.chocolatey`.
+Коллекции и библиотеки ставятся на управляющей машине, в то же
+виртуальное окружение, где стоит Ansible (практика 15):
+  pip install "pywinrm>=0.4.0"
+  ansible-galaxy collection install ansible.windows
+  ansible-galaxy collection install community.windows
+  ansible-galaxy collection install chocolatey.chocolatey
+ЧЕГО НЕ ДЕЛАТЬ: не пишите `gather_facts: true` вслух по привычке.
+Факты собираются, но написаны они для Linux: часть на Windows-узле
+пустая, часть отсутствует. Ограничивайте сбор, если он вообще нужен.
+ЗАЧЕМ ЭТО В РАБОТЕ: основной парк обычно на Linux, но пара служб
+(1С, MS SQL, IIS) живёт на Windows. Их тоже хочется ставить
+плейбуком, а не руками.
+
+=========================================================================
+ИНВЕНТАРЬ И ПОДКЛЮЧЕНИЕ
+=========================================================================
+
+Windows-машины описываются в том же инвентаре, что и Linux:
+добавляется группа `[windows]` и переменные подключения к ней.
+  [windows]
+  win1 ansible_host=10.0.2.21
+  win2 ansible_host=10.0.2.22
+
+  [windows:vars]
+  ansible_user=engineer
+  ansible_password="{{ vault_windows_password }}"
+  ansible_connection=winrm
+  ansible_port=5986
+  ansible_winrm_transport=ntlm
+  ansible_winrm_server_cert_validation=ignore
+  * `ansible_connection=winrm` — ключевая переменная. Без неё Ansible
+    пойдёт по SSH и получит отказ: он попытается запустить Python.
+  * `ansible_port` — порт слушателя. 5986 — HTTPS, 5985 — HTTP.
+  * `ansible_winrm_transport` — метод проверки подлинности:
+    `ntlm` (по умолчанию, работает и без домена), `kerberos`
+    (в домене, самый правильный), `credssp` (делегирование учётных
+    данных на второй узел), `basic` (пароль в заголовке, только
+    поверх HTTPS и лучше не надо).
+  * `ansible_winrm_server_cert_validation=ignore` — не проверять
+    сертификат узла. Только стенд; в работе — сертификат
+    от внутреннего центра сертификации.
+  * `ansible_password` — пароль из Vault (практика 5), не текстом.
+ВАЖНО: имя переменной — `ansible_winrm_server_cert_validation`.
+Короткое `ansible_winrm_cert_validation` молча игнорируется,
+и вы получите `SSL: CERTIFICATE_VERIFY_FAILED` без объяснения
+(разбор — приложение 3, шаг 4).
+HTTP И HTTPS. WinRM по умолчанию отказывается работать по открытому
+каналу. Зашифровать его можно средствами протокола: `ntlm`,
+`kerberos` и `credssp` шифруют нагрузку сами, `basic` не шифрует
+ничего. Связка «5985 + basic» отправляет учётные данные открытым
+текстом. Схема выбирается переменной `ansible_winrm_scheme`
+(`http` или `https`), путь — `ansible_winrm_path` (`/wsman`).
+ЧЕГО НЕ ДЕЛАТЬ: не поднимайте `LocalAccountTokenFilterPolicy`
+на рабочей машине «чтобы заработало» и не открывайте WinRM
+в интернет. Оба решения открывают узел целиком, а не одну задачу.
+Ответ `pong` на команду ниже значит три вещи сразу: WinRM доступен,
+права подходят, и Python на управляемой машине не нужен вовсе —
+модули Windows работают на PowerShell.
+  ansible windows -m ansible.windows.win_ping
+
+=========================================================================
+ШАБЛОНЫ ПЛЕЙБУКОВ
+=========================================================================
+
+Дальше заготовки по темам: блок плейбука и короткий разбор после
+него. Плейбуки намеренно маленькие, чтобы шаблон переносился целиком.
+
+#########################################################################
+ШАБЛОН 1. ПРОВЕРКА СВЯЗИ И ПРАВ
+#########################################################################
+
+  ---
+  - name: Проверить доступность Windows-машин
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Проверить подключение по WinRM
+        ansible.windows.win_ping:
+
+      - name: Узнать, от кого выполняется задача
+        ansible.windows.win_whoami:
+        register: win_user_info
+
+      - name: Показать учётную запись и права
+        ansible.builtin.debug:
+          msg:
+            - "учётная запись: {{ win_user_info.account.account_name }}"
+            - "домен: {{ win_user_info.account.domain_name }}"
+            - "прав входа: {{ win_user_info.rights | length }}"
+`win_ping` не отправляет ICMP-пакеты, несмотря на название: это
+проверка управляемости узла. `win_whoami` возвращает то же, что
+`whoami /all` в консоли, только структурой: `account`, `groups`,
+`rights`, `privileges`, `logon_type`. Это первый вопрос при разборе
+любой Windows-задачи: под кем она вообще выполняется.
+ВАЖНО: у неадминистративной учётной записи список `rights` вернётся
+пустым. Это не ошибка модуля, а нехватка прав на запрос к LSA.
+ПРОВЕРКА: то же самое одной строкой, без плейбука:
+  ansible windows -m ansible.windows.win_whoami
+
+#########################################################################
+ШАБЛОН 2. УСТАНОВКА ПО
+#########################################################################
+
+  ---
+  - name: Установить ПО на Windows
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Установить MSI из локального файла
+        ansible.windows.win_package:
+          path: C:\install\agent.msi
+          product_id: '{5C8A2B10-7E4D-4A2B-9E11-2C6B9F3D1A44}'
+          state: present
+          arguments: /qn
+          log_path: C:\install\agent-install.log
+        register: agent_install
+
+      - name: Перезагрузить узел, если установщик попросил
+        ansible.windows.win_reboot:
+        when: agent_install.reboot_required | default(false)
+
+      - name: Установить пакет из Chocolatey
+        chocolatey.chocolatey.win_chocolatey:
+          name: notepadplusplus
+          state: present
+          version: '8.6.2'
+
+      - name: Включить веб-сервер IIS
+        ansible.windows.win_feature:
+          name: Web-Server
+          include_sub_features: true
+          include_management_tools: true
+          state: present
+        register: iis_feature
+
+      - name: Перезагрузить, если компонент этого потребовал
+        ansible.windows.win_reboot:
+        when: iis_feature.reboot_required
+ПОЧЕМУ ИМЕННО ТАК: `win_package` работает с `msi` и `exe`, и ему
+нужен признак, по которому понять, установлен пакет или нет.
+Для MSI это `product_id` (он же ProductCode), для exe — `product_id`
+из ветки `Uninstall` реестра либо проверки `creates_path`
+и `creates_version`. Без признака задача не станет идемпотентной
+и в отчёте каждый раз будет `changed`.
+Что ещё стоит знать: `arguments` — параметры установщика (для MSI
+не передавайте `/qn`, `/log` и `/norestart`, модуль добавит их сам);
+`expected_return_code` — какие коды считать успехом, по умолчанию
+`[0, 3010]`; `verify_signature: true` — проверить подпись установщика.
+CHOCOLATEY. `chocolatey.chocolatey.win_chocolatey` ставит пакеты
+из репозитория Chocolatey и при необходимости сначала ставит сам
+Chocolatey CLI. Оговорка про интернет здесь главная: без доступа
+к `chocolatey.org` или к своему фиду задача упадёт на скачивании.
+В закрытом контуре указывают свой фид параметром `source`, а для
+выхода через прокси — `proxy_url`, `proxy_username`
+и `proxy_password`. Пароль прокси лучше задавать не в задаче,
+а на уровне конфигурации Chocolatey: в задаче он виден в списке
+процессов.
+КОМПОНЕНТЫ WINDOWS. Роли и компоненты (IIS, .NET, Hyper-V) ставятся
+не установщиком, а модулем `win_feature`, и только на серверных
+редакциях: он опирается на командлеты `Install-WindowsFeature`,
+которых на клиентской Windows нет.
+ЧЕГО НЕ ДЕЛАТЬ: не тащите в плейбук ключ установки и не храните
+его в задаче. Ключи и пароли установщиков идут через Vault.
+
+#########################################################################
+ШАБЛОН 3. ФАЙЛЫ И ШАБЛОНЫ
+#########################################################################
+
+  ---
+  - name: Разложить файлы и конфигурацию
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Создать каталог для приложения
+        ansible.windows.win_file:
+          path: C:\App\conf
+          state: directory
+
+      - name: Скопировать файл как есть
+        ansible.windows.win_copy:
+          src: files/app.conf
+          dest: C:\App\conf\app.conf
+          backup: true
+
+      - name: Разложить конфигурацию из шаблона Jinja2
+        ansible.windows.win_template:
+          src: templates/app.conf.j2
+          dest: C:\App\conf\app.conf
+          newline_sequence: '\r\n'
+          backup: true
+        notify: Restart App
+`win_file` создаёт и удаляет файлы и каталоги, но прав не меняет
+вовсе: у него нет ни `mode`, ни `owner`. Это не упущение модуля,
+а другая модель прав: доступ в Windows описывают списком ACE,
+и делает это `win_acl` (шаблон 7).
+`win_copy` и `win_template` — прямые аналоги `copy` и `template`
+из практик 8 и 12, синтаксис Jinja2 тот же. Два отличия, которые
+ловят всех:
+  * `newline_sequence` по умолчанию `\r\n`, а не `\n` как
+    у Linux-шаблона. Для конфигов, которые читает Linux-софт,
+    ставьте `'\n'` явно.
+  * Перенос файлов через WinRM медленный: `win_copy` гоняет данные
+    через сессию. Крупные дистрибутивы логичнее положить
+    на файловый ресурс или веб-сервер и забрать модулем
+    `ansible.windows.win_get_url`.
+КОДИРОВКА И BOM. Самое частое место, где Windows-скрипт «работает
+у меня и не работает на узле».
+  * PowerShell 5.1 читает файл скрипта без BOM как ANSI. Русские
+    комментарии и строки в таком скрипте превращаются в ошибку
+    разбора или в кракозябры.
+  * Лечится меткой BOM (UTF-8 с BOM) либо тем, что скрипт остаётся
+    ASCII целиком.
+  * Ansible кладёт файлы в UTF-8 без BOM. Поэтому скрипт с не-ASCII
+    текстом, разложенный `win_copy`, на PowerShell 5.1 читается
+    неверно. Первые байты файла на узле проверяют так:
+  Format-Hex -Path C:\App\bootstrap.ps1 -Count 8
+ВАЖНО: конфигу приложения BOM чаще мешает (парсер видит мусор
+в первых байтах), а скрипту PowerShell 5.1 почти всегда нужен.
+Поэтому держите скрипты в ASCII, либо кладите их готовым файлом
+с BOM через `win_copy`, либо проверяйте синтаксис на узле
+параметром `validate`. Он подставляет путь к временному файлу
+вместо `%s` — форма та же, что в практике 11:
+  - name: Разложить скрипт и проверить его синтаксис
+    ansible.windows.win_template:
+      src: templates/bootstrap.ps1.j2
+      dest: C:\App\bootstrap.ps1
+      validate: >-
+        $null = [ScriptBlock]::Create(
+        (Get-Content -LiteralPath %s -Raw))
+Если команда проверки вернула ненулевой код, задача падает,
+а `dest` остаётся нетронутым.
+
+#########################################################################
+ШАБЛОН 4. СЛУЖБЫ, КОМАНДЫ И ИДЕМПОТЕНТНОСТЬ
+#########################################################################
+
+  ---
+  - name: Управлять службой и разовыми командами
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Настроить службу
+        ansible.windows.win_service:
+          name: Spooler
+          start_mode: auto
+          state: started
+
+      - name: Выполнить команду и запомнить вывод
+        ansible.windows.win_command:
+          cmd: whoami.exe /all
+        register: whoami_out
+        changed_when: false
+        failed_when: "'BUILTIN' not in whoami_out.stdout"
+
+      - name: Показать результат
+        ansible.builtin.debug:
+          var: whoami_out.stdout_lines
+Имена служб в Windows человекочитаемые (`Spooler`, `W32Time`,
+`WinRM`), а не имена юнитов. Состояния те же, что в практике 9:
+`started`, `stopped`, `restarted`, `paused`, `absent`.
+ИДЕМПОТЕНТНОСТЬ. `win_command` и `win_shell` — «последнее средство».
+Модуль не знает, изменила ли команда состояние, и по умолчанию
+всегда сообщает `changed`. Поэтому рядом с ними почти всегда стоят:
+  * `register` — забрать результат в переменную;
+  * `changed_when` — сказать правду про изменения: `false`,
+    если команда только читает состояние;
+  * `failed_when` — считать успехом то, что успех на самом деле:
+    код возврата утилиты не всегда совпадает с успехом задачи;
+  * `creates` и `removes` — не выполнять команду вовсе, если
+    результат уже есть (`creates`) или ещё нужен (`removes`).
+`win_command` запускает программу напрямую: конвейеры, `>` и `$env:PATH`
+в нём не работают. Для них нужен `win_shell`, который запускает
+команду через PowerShell; у него есть ещё `executable` (сменить
+оболочку, например на `cmd.exe`) и `no_profile`.
+ЧЕГО НЕ ДЕЛАТЬ: не подменяйте `win_shell` то, что умеет модуль.
+Нужен пакет — `win_package`; нужен пользователь — `win_user`;
+нужно свойство реестра — `win_regedit`. Правило из практики 3
+работает здесь даже строже: длинный скрипт в `win_shell` нечем
+проверить на идемпотентность.
+ОБРАБОТЧИКИ. `notify` и `handlers` устроены как в практике 4:
+  - name: Служба перезапускается только по факту изменения
+    ansible.windows.win_service:
+      name: App
+      state: restarted
+
+#########################################################################
+ШАБЛОН 5. ОБНОВЛЕНИЯ
+#########################################################################
+
+  ---
+  - name: Установить обновления Windows
+    hosts: windows
+    gather_facts: false
+    serial: 1
+    tasks:
+      - name: Найти обновления, не ставя их
+        ansible.windows.win_updates:
+          category_names:
+            - SecurityUpdates
+            - CriticalUpdates
+          state: searched
+          log_path: C:\Windows\Temp\ansible-wu.log
+        register: wu_search
+
+      - name: Показать, что найдено
+        ansible.builtin.debug:
+          msg: "найдено: {{ wu_search.found_update_count | default(0) }}"
+
+      - name: Установить и перезагрузить столько раз, сколько нужно
+        ansible.windows.win_updates:
+          category_names: '*'
+          reject_list:
+            - Windows Malicious Software Removal Tool
+          reboot: true
+          reboot_timeout: 3600
+        register: wu_install
+
+      - name: Дождаться, что узел вернулся и отвечает
+        ansible.builtin.wait_for_connection:
+          timeout: 600
+ПОЧЕМУ ИМЕННО ТАК: `reboot: true` разрешает модулю перезагрузить
+узел посреди установки и продолжить после загрузки. Это единственный
+нормальный способ поставить большое обновление одной задачей:
+оно может потребовать двух и трёх перезагрузок, и разрывать их
+на отдельные задачи бессмысленно. `reboot_timeout` по умолчанию
+1200 секунд; на медленном канале его увеличивают.
+Что стоит знать про этот модуль:
+  * он требует прав локального администратора;
+  * `state: searched` ничего не меняет и удобен для отчёта,
+    а режим `--check` делает то же самое;
+  * `accept_list` и `reject_list` фильтруют обновления по номеру KB
+    или по заголовку, причём заголовок — регулярное выражение;
+  * модуль сам запускает фоновый процесс через планировщик заданий;
+  * `found_update_count`, `installed_update_count`, `reboot_required`
+    и `failed_update_count` годятся для отчёта по парку.
+`wait_for_connection` после обновлений не украшение: модуль вернул
+управление, а службы Windows ещё не устоялись. Таймаут самого WinRM
+задаётся переменной `ansible_winrm_connection_timeout`.
+ЧЕГО НЕ ДЕЛАТЬ: не запускайте установку обновлений по всему парку
+сразу. Это окно обслуживания, `serial: 1` и понятный путь отката.
+Обновление ядра на всех узлах одновременно — способ остаться
+без парка.
+
+#########################################################################
+ШАБЛОН 6. РЕЕСТР, ПОЛЬЗОВАТЕЛИ И ГРУППЫ
+#########################################################################
+
+  ---
+  - name: Настроить реестр и локальные учётные записи
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Отключить показ последнего пользователя
+        ansible.windows.win_regedit:
+          path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+          name: DisplayLastLogonInfo
+          data: 1
+          type: dword
+          state: present
+
+      - name: Создать локального пользователя сервиса
+        ansible.windows.win_user:
+          name: svc_deploy
+          password: "{{ vault_svc_deploy_password }}"
+          password_never_expires: true
+          user_cannot_change_password: true
+          groups:
+            - Users
+          state: present
+
+      - name: Создать локальную группу
+        ansible.windows.win_group:
+          name: deploy
+          description: Группа для развёртывания
+          state: present
+
+      - name: Добавить пользователя в группу
+        ansible.windows.win_group:
+          name: deploy
+          members:
+            add:
+              - .\svc_deploy
+          state: present
+В реестре `path` — ветка, `name` — параметр внутри неё, `data` —
+значение, `type` — тип (`string`, `dword`, `qword`, `expandstring`,
+`multistring`, `binary`, `none`). Нет ветки — она создастся.
+Удаляет параметр `state: absent`, а всю ветку — `state: absent`
+вместе с `delete_key: true`.
+У `win_group` параметр называется `name`, а не `group`. Начальная
+точка в имени (`.\svc_deploy`) означает локальную учётную запись:
+без неё Windows ищет пользователя в домене. Членство описывается
+ключами `add`, `remove` и `set`; `set` заменяет состав целиком
+и указывается отдельно от остальных.
+ВАЖНО: пароль пользователя в задаче — тот же секрет, что
+в практиках 5 и 9. В открытом виде его не пишут ни в плейбуке,
+ни в инвентаре: только переменная из Vault.
+
+#########################################################################
+ШАБЛОН 7. ПРАВА ДОСТУПА (ACL)
+#########################################################################
+
+  ---
+  - name: Выдать права на каталог приложения
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Разрешить чтение и выполнение группе IIS_IUSRS
+        ansible.windows.win_acl:
+          path: C:\inetpub\wwwroot\MySite
+          user: IIS_IUSRS
+          rights: ReadAndExecute
+          type: allow
+          state: present
+          inherit: ContainerInherit, ObjectInherit
+          propagation: 'None'
+
+      - name: Запретить запись служебной группе
+        ansible.windows.win_acl:
+          path: C:\inetpub\wwwroot\MySite
+          user: deploy
+          rights: Write
+          type: deny
+          state: present
+          inherit: ContainerInherit, ObjectInherit
+ПОЧЕМУ ИМЕННО ТАК: в Windows нет числовой маски прав. Есть список
+правил доступа, и каждое правило говорит, кому, что и разрешено
+или запрещено. Поэтому задача описывает не «права на файл»,
+а отдельное правило: пользователя, набор прав, тип (`allow`
+или `deny`) и наследование.
+`win_acl` работает не только с файлами: `path` принимает и ветку
+реестра (`HKCU:\Software\Key`), и сертификат (там права `Read`
+и `FullControl`). Наследование задают через `inherit`
+(`ContainerInherit`, `ObjectInherit`) и `propagation`
+(`None`, `InheritOnly`, `NoPropagateInherit`).
+ВАЖНО: правило `deny` в Windows сильнее `allow` и действует на всех,
+к кому подходит. Запретив запись группе с администратором внутри,
+вы отнимете доступ и себе. Начинайте с `allow`.
+ЧЕГО НЕ ДЕЛАТЬ: не ждите от `win_file` работы с правами. Каталог
+он создаст, а доступ оставит унаследованным: менять его он
+не умеет вообще.
+
+#########################################################################
+ШАБЛОН 8. МЕЖСЕТЕВОЙ ЭКРАН
+#########################################################################
+
+  ---
+  - name: Открыть нужные порты
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Разрешить входящий HTTPS
+        community.windows.win_firewall_rule:
+          name: App HTTPS
+          localport: 8443
+          protocol: tcp
+          direction: in
+          action: allow
+          profiles: domain,private
+          state: present
+          enabled: true
+
+      - name: Разрешить ответы на ping в локальной сети
+        community.windows.win_firewall_rule:
+          name: ICMP Echo Request
+          protocol: icmpv4
+          icmp_type_code:
+            - '8:*'
+          direction: in
+          action: allow
+          profiles: private
+          state: present
+Это аналог `ufw` и `firewalld` из практики 9, только правил не два
+типа, а один модуль с параметрами: `localport`, `remoteip`,
+`protocol`, `direction` (`in` или `out`), `action` (`allow`
+или `block`), `profiles` (`domain`, `private`, `public`).
+Правило ищется по `name`, поэтому имя — фактически ключ
+идемпотентности: переименовали правило, и на узле появилось второе.
+ЧЕГО НЕ ДЕЛАТЬ: не отключайте профиль межсетевого экрана целиком
+вместо добавления правила и не открывайте порт сразу во всех
+профилях: `public` — это сети, которым вы не доверяете.
+
+#########################################################################
+ШАБЛОН 9. ПЕРЕЗАГРУЗКА И ОЖИДАНИЕ
+#########################################################################
+
+  ---
+  - name: Перезагрузить узлы и дождаться их возвращения
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Проверить, нужна ли перезагрузка
+        ansible.windows.win_shell: |
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\'
+          $key += 'WindowsUpdate\Auto Update\RebootRequired'
+          if (Test-Path $key) { 'yes' } else { 'no' }
+        register: reboot
+        changed_when: false
+
+      - name: Перезагрузить узел с сообщением пользователям
+        ansible.windows.win_reboot:
+          msg: "Плановое обслуживание: перезагрузка через 2 минуты"
+          pre_reboot_delay: 120
+          post_reboot_delay: 30
+          reboot_timeout: 900
+        when: reboot.stdout is search('yes')
+
+      - name: Дождаться готовности узла к работе
+        ansible.builtin.wait_for_connection:
+          delay: 10
+          timeout: 900
+          sleep: 5
+`win_reboot` делает больше, чем `shutdown /r`: он даёт команду
+на перезагрузку, ждёт, пока узел пропадёт из сети, и ждёт, пока
+он вернётся и ответит на проверочную команду. Свою проверку задают
+параметром `test_command`, задержку на «устояться» — параметром
+`post_reboot_delay`.
+ПОЧЕМУ ИМЕННО ТАК: после перезагрузки Windows не сразу готова
+к управлению, часть служб ещё поднимается. `win_reboot` в конце
+проверяет экран входа, а `wait_for_connection` добавляет запас
+по времени. Эта пара спасает от ошибок вида «служба не найдена»
+в задаче, которая идёт сразу после перезагрузки.
+ВАЖНО: учётной записи подключения нужно право
+`SeRemoteShutdownPrivilege` (в политике — «Принудительное
+завершение работы с удалённой системы»). Без него задача упадёт
+на отказе в доступе, хотя в консоли та же команда сработает.
+ПРОВЕРКА: что узел действительно вернулся, а не «может, вернулся»:
+  ansible windows -m ansible.windows.win_shell -a "Get-Service -Name WinRM"
+
+#########################################################################
+ШАБЛОН 10. ЗАДАНИЕ ПЛАНИРОВЩИКА
+#########################################################################
+
+  ---
+  - name: Завести задание планировщика
+    hosts: windows
+    gather_facts: false
+    tasks:
+      - name: Запускать скрипт инвентаризации каждый день
+        community.windows.win_scheduled_task:
+          name: CollectInventory
+          path: \Ansible
+          description: Ежедневный сбор инвентаря
+          actions:
+            - path: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+              arguments: >-
+                -ExecutionPolicy Bypass -NonInteractive
+                -File C:\App\inventory.ps1
+          triggers:
+            - type: daily
+              start_boundary: '2026-01-01T03:30:00'
+          username: SYSTEM
+          run_level: highest
+          enabled: true
+          state: present
+Задание описывается структурой: `actions` — что запускать,
+`triggers` — когда, `username` — от кого. Тип триггера задаёт
+набор обязательных полей: у `daily`, `weekly`, `monthly` и `time`
+обязателен `start_boundary` в формате ISO 8601, у `event` — строка
+`subscription`, а `boot` и `logon` дополнительного не требуют.
+Повтор внутри триггера задают через `repetition`: `interval: PT1M`,
+`duration: PT5M`.
+ЗАЧЕМ ЭТО В РАБОТЕ: планировщик обходит ограничения WinRM. Он
+запускает процесс вне удалённой сессии, поэтому задание не подпадает
+под её запреты. Тем же способом работает `win_updates`, когда сам
+создаёт себе фоновое задание.
+ПОЧЕМУ ИМЕННО ТАК: `path` — папка в библиотеке планировщика,
+а не путь в файловой системе. Для учётной записи, отличной
+от `SYSTEM` и служебных, нужен пароль либо право
+`SeBatchLogonRight`.
+ЧЕГО НЕ ДЕЛАТЬ: не заменяйте планировщиком то, что должно быть
+службой. Задание — разовая или регулярная работа, а не постоянно
+живущий процесс.
+
+#########################################################################
+ШАБЛОН 11. РОЛЬ ПОД WINDOWS
+#########################################################################
+
+Роль собирается так же, как в практике 10: меняются модули в задачах
+и добавляется проверка семейства ОС. Состав каталогов:
+  roles/win_agent/
+    tasks/main.yml
+    handlers/main.yml
+    defaults/main.yml
+    vars/main.yml
+    templates/agent.conf.j2
+    files/agent.msi
+    meta/main.yml
+    README.md
+Где что лежит: `defaults/main.yml` — переменные со слабым
+приоритетом, их вызывающий плейбук может переопределить;
+`vars/main.yml` — переменные с высоким приоритетом; `files/` —
+файлы как есть, их кладёт `win_copy`; `templates/` — шаблоны Jinja2,
+их раскладывает `win_template`.
+  # roles/win_agent/defaults/main.yml
+  win_agent_service: Agent
+  win_agent_install_dir: 'C:\Program Files\Agent'
+  win_agent_package: agent.msi
+  # roles/win_agent/tasks/main.yml
+  ---
+  - name: Проверить, что роль запускают на Windows
+    ansible.builtin.assert:
+      that:
+        - ansible_facts['os_family'] == 'Windows'
+      fail_msg: >-
+        Роль win_agent рассчитана на Windows,
+        а тут {{ ansible_facts['os_family'] }}
+      quiet: true
+
+  - name: Установить агент
+    ansible.windows.win_package:
+      path: "{{ role_path }}/files/{{ win_agent_package }}"
+      product_id: '{5C8A2B10-7E4D-4A2B-9E11-2C6B9F3D1A44}'
+      state: present
+    notify: Restart Agent
+
+  - name: Разложить конфигурацию
+    ansible.windows.win_template:
+      src: agent.conf.j2
+      dest: "{{ win_agent_install_dir }}\agent.conf"
+      backup: true
+    notify: Restart Agent
+
+  - name: Служба запущена и в автозапуске
+    ansible.windows.win_service:
+      name: "{{ win_agent_service }}"
+      start_mode: auto
+      state: started
+  # roles/win_agent/handlers/main.yml
+  ---
+  - name: Restart Agent
+    ansible.windows.win_service:
+      name: "{{ win_agent_service }}"
+      state: restarted
+`meta/main.yml` у роли под Windows такой же, как у любой другой:
+сведения о роли и, при необходимости, зависимости полными именами
+(практика 15).
+  # roles/win_agent/meta/main.yml
+  ---
+  galaxy_info:
+    author: учебный курс Ansible
+    description: Агент на Windows-узлах
+    license: MIT
+    min_ansible_version: "2.16"
+    platforms:
+      - name: Windows
+        versions:
+          - all
+  dependencies: []
+ПОДКЛЮЧЕНИЕ В ПЛЕЙБУКЕ. Одна роль на смешанный парк работает,
+только если внутри есть проверка семейства ОС:
+  - name: Разложить агента по всему парку
+    hosts: all
+    gather_facts: true
+    roles:
+      - role: win_agent
+        when: ansible_facts['os_family'] == 'Windows'
+ВАЖНО: здесь `gather_facts` включён осознанно — без фактов условия
+по семейству ОС не с чем сравнивать. Внутри самой роли сбор фактов
+уже не нужен, поэтому там стоит `gather_facts: false`. Короткое
+условие для отдельной задачи выглядит так же:
+  - name: Только для Windows-узлов
+    ansible.windows.win_service:
+      name: WinRM
+      start_mode: delayed
+    when: ansible_facts['os_family'] == 'Windows'
+ЗАЧЕМ ЭТО В РАБОТЕ: роли под Windows пишут отдельно, а не дописывают
+ветку в Linux-роль. Общих модулей у этих систем почти нет: `package`,
+`service`, `user` и `copy` на Windows не работают вовсе. Общими
+остаются структура роли, обработчики, шаблоны Jinja2 и переменные.
+
+=========================================================================
+ЕСЛИ ЧТО-ТО ПОШЛО НЕ ТАК
+=========================================================================
+
+Порядок разбора всегда один: сначала узел, потом транспорт, потом
+учётные данные, и только в конце сам плейбук. Почти все ошибки
+Windows-задач живут до плейбука.
+ПРОБЛЕМА: WinRM недоступен, 401 Unauthorized
+
+  win1 | UNREACHABLE! => {"msg": "winrm connection error: ... 401"}
+
+Код 401 значит, что соединение состоялось, а учётные данные
+не приняты. Проверяйте по порядку:
+
+  1. Тот ли пользователь и тот ли пароль — проверьте вход
+     в консоли этой же учётной записью.
+  2. Тот ли транспорт: `ntlm` для локальной учётной записи,
+     `kerberos` для доменной.
+  3. Дошёл ли запрос до узла. С управляющей машины:
+
+     nc -zv 10.0.2.21 5986
+
+  4. Что узел записал о неудачных входах: журнал Security,
+     события 4625.
+ПРОБЛЕМА: отключена проверка basic
+
+  win1 | UNREACHABLE! => {"msg": "... unsupported authentication ..."}
+
+Basic-аутентификация в WinRM выключена по умолчанию, и это
+правильно. Включают её только на стенде и только вместе с HTTPS:
+
+  # на управляемой машине, PowerShell от администратора
+  Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+
+В работе выбирайте `kerberos` (в домене) или `ntlm`. CredSSP тоже
+выключен по умолчанию и включается отдельно:
+
+  Enable-WSManCredSSP -Role Server -Force
+ПРОБЛЕМА: ошибка сертификата при подключении
+
+  win1 | UNREACHABLE! => {"msg": "ssl: ... certificate verify failed"}
+
+Узел предъявил сертификат, которому управляющая машина не доверяет.
+Причина почти всегда одна: самоподписанный сертификат стенда.
+На стенде проверку допустимо отключить:
+
+  ansible_winrm_server_cert_validation=ignore
+
+В работе так делать нельзя. Правильный путь — сертификат
+от внутреннего центра сертификации и путь к его корневому
+сертификату в переменной `ansible_winrm_ca_trust_path`.
+ПРОБЛЕМА: служба WinRM не запущена или слушателя нет
+
+  win1 | UNREACHABLE! => {"msg": "Timeout ... during operation"}
+
+Соединение не устанавливается. Проверяйте на узле по порядку:
+
+  1. Запущена ли служба и не отключена ли она:
+
+     Get-Service -Name WinRM | Select-Object Status,StartType
+
+  2. Есть ли слушатель и на каком порту:
+
+     winrm enumerate winrm/config/Listener
+
+  3. Открыт ли порт в межсетевом экране:
+
+     Get-NetFirewallRule -DisplayName '*WinRM*' |
+       Select-Object DisplayName,Enabled,Direction,Action
+
+  4. Отвечает ли служба при подключении с другой Windows-машины:
+
+     winrs -r:https://win1:5986/wsman -u:engineer -p:пароль ipconfig
+
+Начинайте со второго пункта: служба может быть запущена, а слушателя
+при этом нет.
+ПРОБЛЕМА: unsupported connection или ModuleNotFoundError
+
+  ERROR! unsupported connection: winrm
+  winrm or requests is not installed
+
+Ansible не нашёл библиотеку `pywinrm`. Она должна стоять в том
+интерпретаторе Python, из которого запущен Ansible:
+
+  source ~/ansible-venv/bin/activate
+  pip install "pywinrm>=0.4.0"
+  pip show pywinrm
+
+Отдельная причина той же ошибки — забытая переменная
+`ansible_connection=winrm`: тогда Ansible честно пытается
+использовать SSH и сообщает, что подключение не поддерживается.
+ПРОБЛЕМА: кракозябры в выводе PowerShell
+
+  stdout: "╨Ю╤В╨║╨╗╤О╤З╨╡╨╜╨╛"
+
+Текст записан в одной кодировке, а прочитан в другой. Что делать:
+
+  1. Проверить, что скрипт на узле читается правильно. PowerShell
+     5.1 читает файл без BOM как ANSI, поэтому не-ASCII скрипт
+     нужен в UTF-8 с BOM:
+
+     Format-Hex -Path C:\App\bootstrap.ps1 -Count 8
+
+  2. Если искажает только внешняя программа, а сам скрипт в порядке,
+     укажите кодировку её вывода в модуле:
+
+     ansible.windows.win_shell:
+       cmd: C:\App\report.exe
+       output_encoding_override: cp866
+
+  3. Кодовую страницу можно выставить и в начале самой команды:
+
+     chcp 65001 | Out-Null; Get-Content C:\App\report.txt
+
+ВАЖНО: BOM в скрипте и BOM в конфиге — разные вещи. Конфигу
+приложения BOM чаще мешает, а скрипту PowerShell 5.1 почти всегда
+нужен.
+ПРОБЛЕМА: win_updates уходит в таймаут
+
+  win1 | FAILED! => {"msg": "Timeout ... waiting for update ..."}
+
+Обновления — долгая операция, и таймаут здесь нормален, а не странен.
+Проверяйте так:
+
+  1. Посмотрите, что модуль успел сделать, по его же логу:
+
+     Get-Content C:\Windows\Temp\ansible-wu.log -Tail 30
+
+  2. Увеличьте ожидание возврата узла после перезагрузки:
+
+     ansible.windows.win_updates:
+       reboot: true
+       reboot_timeout: 3600
+
+  3. Увеличьте таймаут самого соединения (по умолчанию он берётся
+     из pywinrm):
+
+     ansible_winrm_connection_timeout=120
+
+  4. Если планировщик заданий на узле выключен или сломан, модуль
+     не запустит фоновый процесс. Тогда задачу выполняют через
+     `become` с `become_user: SYSTEM`.
+
+Первым делом смотрите лог: чаще всего установка идёт нормально,
+а задача просто ждёт дольше, чем настроено.
+ПРОБЛЕМА: become не работает, задача падает на правах
+
+  win1 | FAILED! => {"msg": "The running command has stopped ... runas"}
+
+`become` в Windows — это не `sudo`, а `runas`, и у него свои условия:
+служба Secondary Logon должна быть запущена, а пароль пользователя
+передан в `ansible_become_password`. Плейбук:
+
+  - name: Установить пакет от имени другого пользователя
+    ansible.windows.win_package:
+      path: C:\install\agent.msi
+      state: present
+    become: true
+    become_method: runas
+    become_user: Administrator
+    vars:
+      ansible_become_password: "{{ vault_local_admin_password }}"
+
+Порядок проверки:
+
+  1. Запущена ли служба Secondary Logon:
+
+     Get-Service -Name seclogon | Select-Object Status,StartType
+
+  2. Верный ли `become_method`: по умолчанию он `sudo`, а на Windows
+     нужен `runas`.
+
+  3. Не пытаетесь ли вы выполнить действие под `SYSTEM` там, где
+     нужен реальный пользовательский вход.
+
+ЗАЧЕМ ЭТО В РАБОТЕ: именно `become` снимает большинство ограничений
+WinRM: неинтерактивную сессию, отсутствие делегирования прав
+и запрет на работу с Windows Update API и DPAPI.
+ПРОБЛЕМА: задача «изменила» то, что не менялось
+
+  changed: [win1]
+
+Так ведут себя `win_command` и `win_shell`: модуль не знает, что
+команда сделала, и по умолчанию считает, что она что-то изменила.
+Лечится это не отключением отчёта, а описанием результата:
+
+  - name: Только читать состояние
+    ansible.windows.win_command:
+      cmd: whoami.exe /all
+    register: whoami_out
+    changed_when: false
+
+Отдельная причина ложного `changed` — установщик без признака
+`product_id` или `creates_path`: `win_package` каждый раз запускает
+установку заново.
+
+=========================================================================
+ЧЕГО НЕ ДЕЛАТЬ
+=========================================================================
+
+  * НЕ ПИШИТЕ ПАРОЛЬ В ИНВЕНТАРЕ. Даже учебный: привычка останется,
+    а пароль уедет в систему контроля версий. Vault, `--ask-pass`
+    или Kerberos без пароля вовсе (практика 5).
+  * НЕ ИСПОЛЬЗУЙТЕ HTTP-WINRM (5985) В РАБОЧЕЙ СРЕДЕ. Шифрование
+    тут держится на самом протоколе, а `basic` не шифрует ничего.
+    В работе либо 5986 с сертификатом, либо `kerberos`.
+  * НЕ СТАВЬТЕ `win_shell` ТАМ, ГДЕ ЕСТЬ МОДУЛЬ. Пакет, служба,
+    пользователь, свойство реестра, правило экрана — всё это
+    описано модулями, и только они дадут идемпотентность.
+  * НЕ СТАВЬТЕ ОБНОВЛЕНИЯ БЕЗ ОКНА ОБСЛУЖИВАНИЯ. `win_updates`
+    с `reboot: true` перезагружает узел сам, когда сочтёт нужным.
+  * НЕ ПИШИТЕ ПУТИ С ПРОБЕЛАМИ БЕЗ КАВЫЧЕК. `C:\Program Files\App`
+    в YAML берут в одинарные кавычки, а путь с пробелом внутри
+    аргументов установщика — ещё и в двойные. Из-за незакавыченного
+    пробела установщик получает два аргумента вместо одного.
+  * НЕ ПОЛЬЗУЙТЕСЬ `become` БЕЗ ПОНИМАНИЯ `runas`. Это не «повышение
+    прав на всякий случай»: другой механизм, другой пароль, другой
+    набор ограничений.
+  * НЕ ОТКЛЮЧАЙТЕ ПРОВЕРКУ СЕРТИФИКАТА В РАБОЧЕЙ СРЕДЕ.
+    `ansible_winrm_server_cert_validation: ignore` — только стенд.
+
+=========================================================================
+ПРОВЕРКА
+=========================================================================
+
+Команды выполняются с управляющей машины, в активированном окружении.
+  # связь: WinRM доступен и права подходят
+  ansible windows -m ansible.windows.win_ping
+
+  # кто мы на самом деле: учётная запись, домен, права входа
+  ansible windows -m ansible.windows.win_whoami
+
+  # что за машины: имя и редакция Windows
+  ansible windows -m ansible.windows.win_shell \
+    -a "Get-ComputerInfo | Select-Object CsName,WindowsProductName"
+
+  # что со службой WinRM
+  ansible windows -m ansible.windows.win_service -a "name=WinRM"
+Справка по модулю приходит всегда, даже когда списка модулей нет:
+  ansible-doc -s ansible.windows.win_package
+  ansible-doc -s ansible.windows.win_updates
+  ansible-doc -s community.windows.win_firewall_rule
+ВАЖНО: `ansible-doc -l` (список всех модулей) в части сборок
+ansible-core падает с ошибкой самого Ansible. Справка по конкретному
+модулю через `-s` работает независимо от этого. Разбор — практика 1,
+шаг 9.
+  # установлены ли коллекции Windows
+  ansible-galaxy collection list | grep -i windows
+
+  # какие переменные подключения реально применились
+  ansible-inventory --host win1
+
+=========================================================================
+ЧТО ДАЛЬШЕ
+=========================================================================
+
+Все приёмы Windows — те же приёмы курса, только на других модулях.
+Где смотреть Linux-аналоги:
+  * ПОДГОТОВКА УЗЛА И ТРАНСПОРТ — приложение 3, шаги 2-5: `pywinrm`,
+    `ConfigureRemotingForAnsible.ps1`, HTTPS и сертификаты;
+    чем Windows отличается от Linux — шаг 6.
+  * ПЕРЕМЕННЫЕ ПОДКЛЮЧЕНИЯ И VAULT — практики 2 и 5.
+  * ПАКЕТЫ И СЛУЖБЫ — практика 9: там те же задачи решают `apt`,
+    `dnf` и `systemd_service`. Сравните с `win_package`
+    и `win_service`: разница в признаке идемпотентности.
+  * ПОЛЬЗОВАТЕЛИ И ГРУППЫ — практика 9 (`user`, `group`).
+  * ФАЙЛЫ, ПРАВА, ТОЧЕЧНАЯ ПРАВКА — практика 8; там же `validate`
+    и его форма `%s`.
+  * ШАБЛОНЫ JINJA2 — практика 6 (первые шаблоны) и практика 12
+    (настоящие конфиги). Синтаксис один, модуль другой.
+  * ИДЕМПОТЕНТНОСТЬ, УСЛОВИЯ И ОБРАБОТЧИКИ — практики 4 и 7.
+  * РОЛИ — практика 10; `meta/main.yml` и `argument_specs` —
+    практика 15.
+  * КОЛЛЕКЦИИ — практика 15: `requirements.yml`, установка
+    и полные имена модулей.
+  * ПРОВЕРКА КАЧЕСТВА — практика 16: `ansible-lint` понимает
+    и Windows-модули, если коллекции объявлены в `requirements.yml`.
+ЧЕГО В ЭТОМ КУРСЕ НЕТ: практики с Windows (для неё нужен отдельный
+стенд с контроллером домена); разбора Active Directory, групповых
+политик, DHCP, DNS, MSSQL и IIS глубже, чем «поставить пакет
+и запустить службу»; тонкостей WinRM с сертификатами от внутреннего
+центра сертификации.
+ВАЖНО: плейбуки в этом приложении написаны по документации коллекций
+`ansible.windows`, `community.windows` и `chocolatey.chocolatey`
+и не запускались: в стенде курса нет Windows-машины, а `ansible-core`
+в окружении проверки не установлен. Имена модулей и параметров
+сверены со справкой, но первый прогон делайте на тестовом узле.
