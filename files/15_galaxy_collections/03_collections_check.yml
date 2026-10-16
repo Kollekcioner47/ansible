@@ -39,15 +39,17 @@
         collections_by_path: "{{ collections_json.stdout | from_json }}"
 
     # dict2items превращает словарь в список пар «ключ — значение»,
-    # flatten склеивает списки из всех каталогов. В результате
-    # item.0 — полное имя коллекции, item.1 — словарь с версией.
+    # flatten склеивает списки из всех каталогов. Каждый элемент —
+    # словарь с полями key и value: key — полное имя коллекции,
+    # value — словарь с версией и путём. Кортежей (item.0, item.1)
+    # здесь нет, поэтому обращаться к ним нельзя.
     - name: Собрать пары «коллекция — версия» в один словарь
       ansible.builtin.set_fact:
         collection_versions: >-
-          {{ collection_versions | default({}) | combine({ item.0: item.1.version }) }}
+          {{ collection_versions | default({}) | combine({ item.key: item.value.version }) }}
       loop: "{{ collections_by_path.values() | map('dict2items') | flatten }}"
       loop_control:
-        label: "{{ item.0 }}"
+        label: "{{ item.key }}"
 
     - name: Показать установленные и нужные коллекции
       ansible.builtin.debug:

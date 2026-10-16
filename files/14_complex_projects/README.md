@@ -9,31 +9,33 @@
 
 ```
 14_complex_projects/
-├── ansible.cfg                 настройки Ansible для проекта
-├── site.yml                    точка входа: только import_playbook
+├── ansible.cfg                     настройки Ansible для проекта
+├── site.yml                        точка входа: только import_playbook
 ├── inventory/
-│   ├── dev.ini                 окружение dev: группа dev
-│   └── prod.ini                окружение prod: группа prod
-├── group_vars/
-│   ├── all/
-│   │   ├── vars.yml            переменные всех машин проекта
-│   │   └── vault.yml.example   образец файла секретов окружения
-│   ├── dev.yml                 переменные окружения dev
-│   └── prod.yml                переменные окружения prod
+│   ├── dev.ini                     окружение dev: группа dev
+│   └── prod.ini                    окружение prod: группа prod
 ├── playbooks/
-│   ├── webservers.yml          веб-часть: роль web_admin, serial
-│   ├── db.yml                  настройка db1 (Rocky Linux 10)
-│   └── report.yml              отчёт о парке на управляющей машине
+│   ├── webservers.yml              веб-часть: роль web_admin, serial
+│   ├── db.yml                      настройка db1 (Rocky Linux 10)
+│   ├── report.yml                  отчёт о парке на управляющей машине
+│   └── group_vars/
+│       ├── all/
+│       │   ├── vars.yml            переменные всех машин проекта
+│       │   └── vault.yml.example   образец файла секретов окружения
+│       ├── dev.yml                 переменные окружения dev
+│       └── prod.yml                переменные окружения prod
 ├── tasks/
-│   └── common_checks.yml       общие проверки машины
+│   └── common_checks.yml           общие проверки машины
 └── roles/
-    └── web_admin/              копия роли из практики 10
+    └── web_admin/                  копия роли из практики 10
 ```
 
 ## Как запускать
 
-Проект запускается из своего каталога: `ansible.cfg` и каталоги
-`group_vars`, `roles` Ansible ищет рядом с плейбуком.
+Проект запускается из своего каталога: `ansible.cfg` Ansible читает
+из текущего каталога, каталог переменных `group_vars` находит рядом
+с плейбуком (он лежит в `playbooks/`), а роли — по `roles_path`
+из `ansible.cfg`.
 
 ```
 mkdir -p ~/ansible-lab/14_complex_projects
@@ -56,7 +58,7 @@ ansible-playbook site.yml -i inventory/prod.ini
 |---|---|---|
 | Инвентарь | `inventory/dev.ini` | `inventory/prod.ini` |
 | Группа окружения | `dev` | `prod` |
-| Переменные | `group_vars/dev.yml` | `group_vars/prod.yml` |
+| Переменные | `playbooks/group_vars/dev.yml` | `playbooks/group_vars/prod.yml` |
 | Обновление парка | `update_serial: "100%"` — все машины разом | `update_serial: 1` — по одной машине |
 | Заголовок страницы | `DEV: учебный стенд курса Ansible` | `PROD: учебный стенд курса Ansible` |
 | Подпись в отчёте | «пробный парк» | «боевой парк» |
@@ -81,9 +83,10 @@ ansible-playbook site.yml -i inventory/prod.ini
 
 ## Секреты
 
-`group_vars/all/vault.yml.example` — образец: скопируйте его
-в `group_vars/all/vault.yml`, впишите свои значения и зашифруйте
-командой `ansible-vault encrypt group_vars/all/vault.yml`.
+`playbooks/group_vars/all/vault.yml.example` — образец: скопируйте
+его в `playbooks/group_vars/all/vault.yml`, впишите свои значения
+и зашифруйте командой
+`ansible-vault encrypt playbooks/group_vars/all/vault.yml`.
 `vault.yml.example` в репозитории не зашифрован намеренно: своим
 паролем его прочитать нельзя, а курс обещает проверяемый материал.
 Рабочий файл `vault.yml` в репозиторий не попадает.

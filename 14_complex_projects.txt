@@ -11,8 +11,8 @@
 =========================================================================
 
 Соберём проект из каталогов — site.yml, playbooks/, inventory/,
-group_vars/, tasks/ и roles/ — и разберём, почему «всё в одном файле»
-перестаёт работать. Разберём import_playbook, import_tasks
+group_vars/ внутри playbooks/, tasks/ и roles/ — и разберём, почему
+«всё в одном файле» перестаёт работать. Разберём import_playbook, import_tasks
 и include_tasks, import_role и include_role: что Ansible разбирает
 при загрузке, а что во время прогона, и как это отражается на тегах,
 условиях и выводе --list-tasks. Поставим опыт: один и тот же файл
@@ -67,25 +67,25 @@ group_vars/, tasks/ и roles/ — и разберём, почему «всё в 
 файле это три сотни строк, где работы переплетены.
 
   14_complex_projects/
-  ├── ansible.cfg                 настройки Ansible для проекта
-  ├── site.yml                    точка входа: только import_playbook
+  ├── ansible.cfg                     настройки Ansible для проекта
+  ├── site.yml                        точка входа: только import_playbook
   ├── inventory/
-  │   ├── dev.ini                 окружение dev: группа dev
-  │   └── prod.ini                окружение prod: группа prod
-  ├── group_vars/
-  │   ├── all/
-  │   │   ├── vars.yml            переменные всех машин проекта
-  │   │   └── vault.yml.example   образец файла секретов
-  │   ├── dev.yml                 переменные окружения dev
-  │   └── prod.yml                переменные окружения prod
+  │   ├── dev.ini                     окружение dev: группа dev
+  │   └── prod.ini                    окружение prod: группа prod
   ├── playbooks/
-  │   ├── webservers.yml          веб-часть: роль web_admin, serial
-  │   ├── db.yml                  настройка db1 (Rocky Linux 10)
-  │   └── report.yml              отчёт о парке на управляющей машине
+  │   ├── webservers.yml              веб-часть: роль web_admin, serial
+  │   ├── db.yml                      настройка db1 (Rocky Linux 10)
+  │   ├── report.yml                  отчёт о парке на управляющей машине
+  │   └── group_vars/
+  │       ├── all/
+  │       │   ├── vars.yml            переменные всех машин проекта
+  │       │   └── vault.yml.example   образец файла секретов
+  │       ├── dev.yml                 переменные окружения dev
+  │       └── prod.yml                переменные окружения prod
   ├── tasks/
-  │   └── common_checks.yml       общие проверки машины
+  │   └── common_checks.yml           общие проверки машины
   └── roles/
-      └── web_admin/              копия роли из практики 10
+      └── web_admin/                  копия роли из практики 10
 
 Каталога reports/ в проекте нет: его создаёт задача из report.yml
 при первом прогоне. Настройки проекта — файл ansible.cfg:
@@ -548,9 +548,9 @@ max_fail_percentage — страховка при обновлении парт�
 партии. Проценты сравниваются строго: чтобы остановиться при отказе
 двух машин из четырёх, указывают 49, а не 50. У нас стоит 0.
 
-Различие окружений видно прямо здесь: в group_vars/dev.yml стоит
+Различие окружений видно прямо здесь: в playbooks/group_vars/dev.yml стоит
 update_serial: "100%" (весь пробный парк за один заход), в
-group_vars/prod.yml — update_serial: 1 (по одной машине).
+playbooks/group_vars/prod.yml — update_serial: 1 (по одной машине).
 
 ПОЧЕМУ ИМЕННО ТАК: serial берётся из переменной окружения, а не зашит
 в плейбук числом. Число машин в партии — решение о безопасности работ,
@@ -562,7 +562,7 @@ group_vars/prod.yml — update_serial: 1 (по одной машине).
 ПРОВЕРКА: ansible-playbook site.yml -i inventory/dev.ini --tags web
 | grep -c '^PLAY' даст четыре строки при update_serial: "100%": три
 play плюс последняя строка PLAY RECAP, которую команда тоже считает.
-Замените в group_vars/dev.yml значение на 1 — строк станет пять:
+Замените в playbooks/group_vars/dev.yml значение на 1 — строк станет пять:
 веб-часть пойдёт двумя партиями, и строка PLAY напечатается дважды.
 
 =========================================================================
@@ -620,7 +620,7 @@ THROTTLE ограничивает число машин, которые выпо
 dev, файл inventory/dev.ini:
 
   # inventory/dev.ini — окружение dev. Формат INI.
-  # Группа dev нужна, чтобы Ansible нашёл файл group_vars/dev.yml:
+  # Группа dev нужна, чтобы Ansible нашёл файл playbooks/group_vars/dev.yml:
   # машины попадают в неё через группу linux, а не перечислением.
 
   [web]
@@ -647,10 +647,10 @@ dev, файл inventory/dev.ini:
 Ansible и понимает, какой файл переменных читать. В рабочем проекте
 prod был бы другим парком машин, часто — динамическим (практика 16).
 
-Переменные окружения dev — файл group_vars/dev.yml:
+Переменные окружения dev — файл playbooks/group_vars/dev.yml:
 
   ---
-  # group_vars/dev.yml — переменные окружения dev. Файл применяется
+  # playbooks/group_vars/dev.yml — переменные окружения dev. Файл применяется
   # к машинам группы dev из inventory/dev.ini.
 
   # Сайт разворачивается: в dev проверяем всё.
@@ -663,13 +663,13 @@ prod был бы другим парком машин, часто — динам
   # Обновление dev идёт сразу по всему парку: за один заход 100% машин.
   update_serial: "100%"
 
-  # Владелец машины: значение из group_vars/all/vars.yml.
+  # Владелец машины: значение из playbooks/group_vars/all/vars.yml.
   web_admin_owner: "{{ lab_owner }}"
 
-Переменные окружения prod — файл group_vars/prod.yml:
+Переменные окружения prod — файл playbooks/group_vars/prod.yml:
 
   ---
-  # group_vars/prod.yml — переменные окружения prod. Тот же site.yml,
+  # playbooks/group_vars/prod.yml — переменные окружения prod. Тот же site.yml,
   # те же плейбуки и роли: отличается только этот файл.
 
   # Сайт разворачивается.
@@ -683,15 +683,15 @@ prod был бы другим парком машин, часто — динам
   # в serial в playbooks/webservers.yml.
   update_serial: 1
 
-  # Владелец машины: значение из group_vars/all/vars.yml.
+  # Владелец машины: значение из playbooks/group_vars/all/vars.yml.
   web_admin_owner: "{{ lab_owner }}"
 
-Общие переменные проекта — файл group_vars/all/vars.yml:
+Общие переменные проекта — файл playbooks/group_vars/all/vars.yml:
 
   ---
-  # group_vars/all/vars.yml — переменные, общие для всех машин проекта
-  # и для обоих окружений. Выбрана форма каталога group_vars/all/,
-  # а не файл group_vars/all.yml: рядом лежит пример файла секретов
+  # playbooks/group_vars/all/vars.yml — переменные, общие для всех машин проекта
+  # и для обоих окружений. Выбрана форма каталога playbooks/group_vars/all/,
+  # а не файл playbooks/group_vars/all.yml: рядом лежит пример файла секретов
   # vault.yml.example, а обе формы одного места не держат — когда есть
   # и каталог all/, и файл all.yml, Ansible читает каталог, а файл
   # остаётся не прочитанным: молча, без единой ошибки.
@@ -704,7 +704,7 @@ prod был бы другим парком машин, часто — динам
   lab_owner: engineer
 
   # Роль web_admin: порт сайта и заголовок страницы по умолчанию.
-  # Заголовок переопределяют окружения в group_vars/dev.yml и prod.yml.
+  # Заголовок переопределяют окружения в playbooks/group_vars/dev.yml и prod.yml.
   web_admin_port: 80
   web_admin_site_title: "Учебный стенд курса Ansible"
 
@@ -727,12 +727,17 @@ prod был бы другим парком машин, часто — динам
   report_file: fleet-report.txt
 
 Каталоги group_vars и host_vars Ansible ищет рядом с инвентарём и рядом
-с плейбуком: у нас найден group_vars в корне проекта. Приоритет: файл
-группы окружения (group_vars/dev.yml) сильнее файла группы all
-(group_vars/all/vars.yml), а переменные хоста (host_vars/<машина>)
-сильнее переменных группы. Тот же порядок разобран в практике 5: там
-на опыте с web_port видно, что значение из host_vars/web1.yml
-перебивает group_vars/all.yml.
+с плейбуком. У нас инвентарь лежит в inventory/, а play описаны
+в playbooks/: корневой site.yml только подключает их ключом
+import_playbook. Поэтому каталог переменных стоит в playbooks/group_vars/:
+его видят все плейбуки модуля. Каталог group_vars в корне проекта
+не находится ни по одному из двух путей: инвентарь лежит не рядом с ним
+и play — тоже, поэтому включённые плейбуки переменных не видят.
+Приоритет: файл группы окружения (playbooks/group_vars/dev.yml) сильнее
+файла группы all (playbooks/group_vars/all/vars.yml), а переменные хоста
+(playbooks/host_vars/<машина>) сильнее переменных группы. Тот же порядок
+разобран в практике 5: там на опыте с web_port видно, что переменная
+хоста перебивает переменную группы all.
 
 ПОЧЕМУ ИМЕННО ТАК: окружение описано не отдельным плейбуком, а именем
 группы и её переменными. Третий стенд (например, stage) добавляется
@@ -759,9 +764,9 @@ title покажет "PROD: учебный стенд курса Ansible": од�
   # а непроверенный шифротекст студент своим паролем не откроет.
   #
   # Как из образца сделать рабочий файл:
-  #   cp group_vars/all/vault.yml.example group_vars/all/vault.yml
+  #   cp playbooks/group_vars/all/vault.yml.example playbooks/group_vars/all/vault.yml
   #   # впишите свои значения, затем зашифруйте файл:
-  #   ansible-vault encrypt group_vars/all/vault.yml
+  #   ansible-vault encrypt playbooks/group_vars/all/vault.yml
   #
   # Значения ниже — УЧЕБНЫЕ ЗАГЛУШКИ. На своём стенде замените их своими.
 
@@ -771,15 +776,16 @@ title покажет "PROD: учебный стенд курса Ansible": од�
   # Ключ API учебного приложения.
   vault_api_token: "ЗАМЕНИТЕ_ЭТОТ_КЛЮЧ"
 
-Это файл group_vars/all/vault.yml.example. Секреты бывают общие для
-проекта (group_vars/all/vault.yml) и отдельные для окружения
-(group_vars/dev/vault.yml и group_vars/prod/vault.yml): пароли боевой
-и пробной баз разные, и доступ к ним у разных людей.
+Это файл playbooks/group_vars/all/vault.yml.example. Секреты бывают
+общие для проекта (playbooks/group_vars/all/vault.yml) и отдельные
+для окружения (playbooks/group_vars/dev/vault.yml и
+playbooks/group_vars/prod/vault.yml): пароли боевой и пробной баз
+разные, и доступ к ним у разных людей.
 
   cd ~/ansible-lab/14_complex_projects
-  cp group_vars/all/vault.yml.example group_vars/all/vault.yml
-  vi group_vars/all/vault.yml
-  ansible-vault encrypt group_vars/all/vault.yml
+  cp playbooks/group_vars/all/vault.yml.example playbooks/group_vars/all/vault.yml
+  vi playbooks/group_vars/all/vault.yml
+  ansible-vault encrypt playbooks/group_vars/all/vault.yml
 
 Запуск проекта с секретами требует пароля Vault:
 
@@ -1098,7 +1104,7 @@ playbooks/webservers.yml это playbooks/roles, где роли нет. Пор�
 
 7. Секреты не утекли в репозиторий:
 
-     ls group_vars/all/
+     ls playbooks/group_vars/all/
        vars.yml  vault.yml.example
      git status --short
 

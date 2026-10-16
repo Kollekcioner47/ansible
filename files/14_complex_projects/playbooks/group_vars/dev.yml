@@ -1,0 +1,16 @@
+---
+# playbooks/group_vars/dev.yml — переменные окружения dev. Файл применяется
+# к машинам группы dev из inventory/dev.ini.
+
+# Сайт разворачивается: в dev проверяем всё.
+web_admin_deploy_site: true
+
+# По заголовку страницы и подписи в отчёте видно, какое это окружение.
+web_admin_site_title: "DEV: учебный стенд курса Ansible"
+report_title: "Окружение dev: пробный парк, обновляем все машины сразу"
+
+# Обновление dev идёт сразу по всему парку: за один заход 100% машин.
+update_serial: "100%"
+
+# Владелец машины: значение из playbooks/group_vars/all/vars.yml.
+web_admin_owner: "{{ lab_owner }}"

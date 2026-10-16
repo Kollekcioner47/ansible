@@ -1,4 +1,5 @@
 # Практическое использование Ansible
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/b20a96c4-5b6c-4e70-a524-87d9957613ec" />
 
 > Один курс — два трека: 3 дня (24 ак.ч.) и 5 дней (40 ак.ч.).
 
