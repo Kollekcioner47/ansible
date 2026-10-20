@@ -866,8 +866,8 @@ INI-строки или просто список машин без групп. 
 
      ansible-inventory --host web1 | grep lab_owner
          "lab_owner": "ivan",
-     ansible-inventory --host db1 | grep web_package
-         "web_package": "httpd",
+     ansible-inventory --host db1 | grep web_service
+         "web_service": "httpd",
 
 6. Шаблоны выбирают нужные машины:
 
